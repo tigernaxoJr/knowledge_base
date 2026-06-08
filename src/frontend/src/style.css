@@ -2,24 +2,24 @@
 
 /* ── 設計系統：CSS 變數 ────────────────────────────────────────────────────── */
 :root {
-  --color-bg-base:      #0f1117;
-  --color-bg-surface:   #1a1d27;
-  --color-bg-elevated:  #22263a;
-  --color-border:       rgba(255, 255, 255, 0.08);
-  --color-text-primary: #e8eaf0;
-  --color-text-muted:   #8b90a4;
-  --color-accent:       #6366f1;        /* indigo-500 */
-  --color-accent-glow:  rgba(99, 102, 241, 0.25);
+  --color-bg-base:      #090b0f;       /* 極簡深邃科技黑 */
+  --color-bg-surface:   #11141a;    /* 現代冷灰面板 */
+  --color-bg-elevated:  #181c24;   /* 懸浮元素 */
+  --color-border:       rgba(255, 255, 255, 0.06);
+  --color-text-primary: #f3f4f6;   /* 乾淨白 */
+  --color-text-muted:   #828b9a;     /* 輔助冷灰 */
+  --color-accent:       #0ea5e9;        /* 科技感極簡天空藍 (sky-500) */
+  --color-accent-glow:  rgba(14, 165, 233, 0.15);
 
-  --radius-sm:  6px;
-  --radius-md:  12px;
-  --radius-lg:  20px;
+  --radius-sm:  4px;               /* 銳利直角科技感 */
+  --radius-md:  8px;
+  --radius-lg:  12px;
 
-  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.4);
-  --shadow-md:  0 4px 16px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 24px var(--color-accent-glow);
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-md:  0 4px 12px rgba(0, 0, 0, 0.6);
+  --shadow-glow: 0 0 16px var(--color-accent-glow);
 
-  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition: 0.15s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 /* ── 基礎重設 ─────────────────────────────────────────────────────────────── */
