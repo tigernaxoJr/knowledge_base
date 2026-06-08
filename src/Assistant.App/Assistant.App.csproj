@@ -21,8 +21,9 @@
     發布指令：dotnet publish -c Release -r win-x64 /p:PublishAot=true
   -->
   <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
-    <PublishAot>true</PublishAot>
-    <SuppressTrimAnalysisWarnings>false</SuppressTrimAnalysisWarnings>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <PublishAot>false</PublishAot>
   </PropertyGroup>
 
   <!-- ── NuGet 套件 ──────────────────────────────────────────────────────── -->
@@ -41,7 +42,7 @@
     條件：dist/ 目錄不存在，或強制重建（環境變數 FORCE_FRONTEND_BUILD=1）
   -->
   <Target Name="BuildFrontend"
-          BeforeTargets="Build;Publish"
+          BeforeTargets="IncludeFrontendDist"
           Condition="!Exists('$(FrontendDistDir)/index.html') Or '$(FORCE_FRONTEND_BUILD)' == '1'">
     <Message Text="[Build Pipeline] Installing frontend dependencies..." Importance="high" />
     <Exec Command="pnpm install" WorkingDirectory="$(FrontendDir)" />
@@ -55,8 +56,7 @@
     後端透過 Assembly.GetManifestResourceStream("frontend/index.html") 讀取。
   -->
   <Target Name="IncludeFrontendDist"
-          AfterTargets="BuildFrontend"
-          BeforeTargets="BeforeBuild"
+          BeforeTargets="AssignTargetPaths"
           Condition="Exists('$(FrontendDistDir)')">
     <ItemGroup>
       <FrontendFiles Include="$(FrontendDistDir)\**\*.*" />

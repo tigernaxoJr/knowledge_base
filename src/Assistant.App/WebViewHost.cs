@@ -7,8 +7,8 @@ namespace Assistant.App;
 /// <summary>
 /// WebView2 主視窗宿主：
 /// - 建立 WinForms 視窗並嵌入 WebView2 控制項
-/// - 向 WebView2 註冊自訂 URI Scheme <c>app://</c>
-/// - 導向至 <c>app://frontend/index.html</c>（Embedded Resource）
+/// - 向 WebView2 註冊自訂網域過濾器 <c>https://frontend.local/*</c>
+/// - 導向至 <c>https://frontend.local/index.html</c>（Embedded Resource）
 /// - 委派訊息收發給 <see cref="IpcBridge"/>
 /// </summary>
 internal sealed class WebViewHost : IDisposable
@@ -61,7 +61,7 @@ internal sealed class WebViewHost : IDisposable
         var core = _webView.CoreWebView2;
 
         // ── 1. 註冊自訂 URI Scheme 過濾器 ──
-        core.AddWebResourceRequestedFilter("app://*", CoreWebView2WebResourceContext.All);
+        core.AddWebResourceRequestedFilter("https://frontend.local/*", CoreWebView2WebResourceContext.All);
         core.WebResourceRequested += OnWebResourceRequested;
 
         // ── 2. 設定 IPC：接收前端 postMessage ──
@@ -73,18 +73,18 @@ internal sealed class WebViewHost : IDisposable
         core.Navigate("http://localhost:5173");
 #else
         // 生產模式：載入嵌入的靜態資產
-        core.Navigate("app://frontend/index.html");
+        core.Navigate("https://frontend.local/index.html");
 #endif
     }
 
-    /// <summary>攔截 <c>app://*</c> 請求，從 Embedded Resources 回應靜態資產</summary>
+    /// <summary>攔截 <c>https://frontend.local/*</c> 請求，從 Embedded Resources 回應靜態資產</summary>
     private void OnWebResourceRequested(object? sender, CoreWebView2WebResourceRequestedEventArgs args)
     {
         if (_webView?.CoreWebView2 is null) return;
 
-        // "app://frontend/assets/index.js" → "frontend/assets/index.js"
+        // "https://frontend.local/assets/index.js" → "frontend/assets/index.js"
         var uri = new Uri(args.Request.Uri);
-        var resourcePath = uri.Host + uri.AbsolutePath.TrimStart('/');
+        var resourcePath = "frontend" + uri.AbsolutePath;
 
         var (stream, contentType) = _resourceLoader.Load(resourcePath);
         if (stream is not null)

@@ -31,7 +31,7 @@ internal sealed class IpcResponse
     public bool Success { get; set; }
 
     [JsonPropertyName("data")]
-    public object? Data { get; set; }
+    public JsonElement? Data { get; set; }
 
     [JsonPropertyName("error")]
     public string? Error { get; set; }
@@ -264,10 +264,37 @@ internal sealed class IpcBridge
 
     // ── 輔助方法 ──────────────────────────────────────────────────────────
 
-    private static string SuccessResponse(string requestId, object? data) =>
-        JsonSerializer.Serialize(
-            new IpcResponse { RequestId = requestId, Success = true, Data = data },
-            IpcJsonContext.Default.IpcResponse);
+    private static string SuccessResponse(string requestId, object? data)
+    {
+        if (data is null)
+        {
+            var response = new IpcResponse { RequestId = requestId, Success = true, Data = null };
+            return JsonSerializer.Serialize(response, IpcJsonContext.Default.IpcResponse);
+        }
+
+        string json;
+        if (data is KnowledgeEntry entry)
+            json = JsonSerializer.Serialize(entry, IpcJsonContext.Default.KnowledgeEntry);
+        else if (data is List<SearchResult> searchResults)
+            json = JsonSerializer.Serialize(searchResults, IpcJsonContext.Default.ListSearchResult);
+        else if (data is List<KnowledgeVersion> history)
+            json = JsonSerializer.Serialize(history, IpcJsonContext.Default.ListKnowledgeVersion);
+        else if (data is AppSettings settings)
+            json = JsonSerializer.Serialize(settings, IpcJsonContext.Default.AppSettings);
+        else if (data is TestConfigResult testResult)
+            json = JsonSerializer.Serialize(testResult, IpcJsonContext.Default.TestConfigResult);
+        else
+            throw new NotSupportedException($"Serialization of type {data.GetType().FullName} is not supported in Native AOT.");
+
+        using var doc = JsonDocument.Parse(json);
+        var responseWithData = new IpcResponse
+        {
+            RequestId = requestId,
+            Success = true,
+            Data = doc.RootElement.Clone()
+        };
+        return JsonSerializer.Serialize(responseWithData, IpcJsonContext.Default.IpcResponse);
+    }
 
     private static string ErrorResponse(string requestId, string error) =>
         JsonSerializer.Serialize(

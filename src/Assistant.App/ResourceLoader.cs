@@ -14,6 +14,14 @@ internal sealed class ResourceLoader
 {
     private static readonly Assembly _assembly = Assembly.GetExecutingAssembly();
 
+    private static readonly Dictionary<string, string> _resourceMap = 
+        _assembly.GetManifestResourceNames()
+                 .ToDictionary(
+                     name => name.Replace('\\', '/').ToLowerInvariant(),
+                     name => name,
+                     StringComparer.OrdinalIgnoreCase
+                 );
+
     /// <summary>
     /// 根據資源路徑載入嵌入資源串流與對應的 Content-Type。
     /// </summary>
@@ -26,12 +34,19 @@ internal sealed class ResourceLoader
     /// </returns>
     public (Stream? Stream, string? ContentType) Load(string resourcePath)
     {
-        var stream = _assembly.GetManifestResourceStream(resourcePath)
-                     ?? _assembly.GetManifestResourceStream(resourcePath.Replace('/', '\\'));
-        if (stream is null) return (null, null);
+        var normalizedKey = resourcePath.Replace('\\', '/').ToLowerInvariant();
 
-        var contentType = GetContentType(resourcePath);
-        return (stream, contentType);
+        if (_resourceMap.TryGetValue(normalizedKey, out var actualResourceName))
+        {
+            var stream = _assembly.GetManifestResourceStream(actualResourceName);
+            if (stream is not null)
+            {
+                var contentType = GetContentType(resourcePath);
+                return (stream, contentType);
+            }
+        }
+
+        return (null, null);
     }
 
     /// <summary>依副檔名對應 MIME Content-Type</summary>
