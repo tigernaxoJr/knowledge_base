@@ -10,9 +10,10 @@ public class SearchTests
     public async Task VectorSearch_ShouldSaveAndRetrieveEntryVectorsBySimilarity()
     {
         var tempFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.db");
+        var tempDir = Path.Combine(Path.GetTempPath(), $"{Path.GetFileNameWithoutExtension(tempFile)}_lancedb");
         try
         {
-            var lanceDb = new LanceDbClient(tempFile);
+            using var lanceDb = new LanceDbClient(tempFile);
 
             var entryId1 = Guid.NewGuid();
             var entryId2 = Guid.NewGuid();
@@ -33,11 +34,16 @@ public class SearchTests
         }
         finally
         {
-            // Release pooled connection locks so the file can be deleted
-            Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
-            if (File.Exists(tempFile))
+            if (Directory.Exists(tempDir))
             {
-                File.Delete(tempFile);
+                try
+                {
+                    Directory.Delete(tempDir, recursive: true);
+                }
+                catch
+                {
+                    // Ignore transient cleanup errors in tests
+                }
             }
         }
     }

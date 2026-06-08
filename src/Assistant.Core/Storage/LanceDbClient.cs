@@ -1,39 +1,99 @@
-using Microsoft.Data.Sqlite;
+using Apache.Arrow;
+using Apache.Arrow.Types;
+using lancedb;
 
 namespace Assistant.Core.Storage;
 
-public sealed class LanceDbClient : ILanceDbClient
+public sealed class LanceDbClient : ILanceDbClient, IDisposable
 {
-    private readonly string _connectionString;
+    private readonly string _dbDirectory;
+    private Connection? _connection;
+    private readonly SemaphoreSlim _lock = new(1, 1);
+    private bool _isDisposed;
 
     public LanceDbClient(string? dbPath = null)
     {
-        dbPath ??= Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "assistant.db");
-        _connectionString = $"Data Source={dbPath}";
-        InitializeDatabase();
+        if (dbPath == null)
+        {
+            _dbDirectory = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "lancedb");
+        }
+        else
+        {
+            if (dbPath.EndsWith(".db", StringComparison.OrdinalIgnoreCase))
+            {
+                var dir = Path.GetDirectoryName(dbPath);
+                var name = Path.GetFileNameWithoutExtension(dbPath);
+                _dbDirectory = Path.Combine(dir ?? AppDomain.CurrentDomain.BaseDirectory, $"{name}_lancedb");
+            }
+            else
+            {
+                _dbDirectory = dbPath;
+            }
+        }
     }
 
-    private void InitializeDatabase()
+    private async Task<Connection> GetConnectionAsync(CancellationToken ct)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        connection.Open();
+        ObjectDisposedException.ThrowIf(_isDisposed, this);
 
-        var commandText = @"
-            CREATE TABLE IF NOT EXISTS document_outlines_vector (
-                outline_id TEXT PRIMARY KEY,
-                title TEXT,
-                vector_data BLOB NOT NULL
-            );
+        if (_connection != null)
+        {
+            return _connection;
+        }
 
-            CREATE TABLE IF NOT EXISTS knowledge_entries_vector (
-                entry_id TEXT PRIMARY KEY,
-                title TEXT,
-                vector_data BLOB NOT NULL
-            );
-        ";
+        await _lock.WaitAsync(ct);
+        try
+        {
+            if (_connection == null)
+            {
+                if (!Directory.Exists(_dbDirectory))
+                {
+                    Directory.CreateDirectory(_dbDirectory);
+                }
+                var conn = new Connection();
+                await conn.Connect(_dbDirectory);
+                _connection = conn;
+            }
+            return _connection;
+        }
+        finally
+        {
+            _lock.Release();
+        }
+    }
 
-        using var command = new SqliteCommand(commandText, connection);
-        command.ExecuteNonQuery();
+    private async Task<lancedb.Table> GetOrCreateTableAsync(Connection conn, string tableName, int vectorDim, CancellationToken ct)
+    {
+        var tables = await conn.TableNames();
+        if (tables.Contains(tableName))
+        {
+            return await conn.OpenTable(tableName);
+        }
+
+        var schema = CreateSchema(tableName, vectorDim);
+        return await conn.CreateTable(tableName, new CreateTableOptions { Schema = schema });
+    }
+
+    private Schema CreateSchema(string tableName, int vectorDim)
+    {
+        var vectorField = new Field("vector", new FixedSizeListType(FloatType.Default, vectorDim), nullable: false);
+
+        if (tableName == "document_outlines_vector")
+        {
+            return new Schema.Builder()
+                .Field(new Field("outline_id", StringType.Default, nullable: false))
+                .Field(new Field("title", StringType.Default, nullable: true))
+                .Field(vectorField)
+                .Build();
+        }
+        else // knowledge_entries_vector
+        {
+            return new Schema.Builder()
+                .Field(new Field("entry_id", StringType.Default, nullable: false))
+                .Field(new Field("title", StringType.Default, nullable: true))
+                .Field(vectorField)
+                .Build();
+        }
     }
 
     // ── 大綱向量表 (document_outlines_vector) ──────────────────────────────
@@ -41,50 +101,65 @@ public sealed class LanceDbClient : ILanceDbClient
     public async Task UpsertOutlineVectorAsync(
         Guid outlineId, string title, float[] vector, CancellationToken ct = default)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        var connection = await GetConnectionAsync(ct);
+        var table = await GetOrCreateTableAsync(connection, "document_outlines_vector", vector.Length, ct);
 
-        var query = @"
-            INSERT INTO document_outlines_vector (outline_id, title, vector_data)
-            VALUES ($id, $title, $vector)
-            ON CONFLICT(outline_id) DO UPDATE SET title = $title, vector_data = $vector;
-        ";
+        // Delete if exists to avoid duplicates
+        await table.Delete($"outline_id = '{outlineId}'");
 
-        using var command = new SqliteCommand(query, connection);
-        command.Parameters.AddWithValue("$id", outlineId.ToString());
-        command.Parameters.AddWithValue("$title", title);
-        command.Parameters.AddWithValue("$vector", FloatArrayToBytes(vector));
+        var schema = CreateSchema("document_outlines_vector", vector.Length);
+        
+        var idArray = new StringArray.Builder().Append(outlineId.ToString()).Build();
+        var titleArray = new StringArray.Builder().Append(title).Build();
 
-        await command.ExecuteNonQueryAsync(ct);
+        var listBuilder = new FixedSizeListArray.Builder(FloatType.Default, vector.Length);
+        listBuilder.Append();
+        var floatBuilder = (FloatArray.Builder)listBuilder.ValueBuilder;
+        foreach (var val in vector)
+        {
+            floatBuilder.Append(val);
+        }
+        var vectorArray = listBuilder.Build();
+
+        using var batch = new RecordBatch(schema, new IArrowArray[] { idArray, titleArray, vectorArray }, 1);
+        await table.Add(batch);
     }
 
     public async Task<IReadOnlyList<(Guid OutlineId, float Score)>> SearchOutlineVectorsAsync(
         float[] queryVector, int topK, CancellationToken ct = default)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        var connection = await GetConnectionAsync(ct);
+        var table = await GetOrCreateTableAsync(connection, "document_outlines_vector", queryVector.Length, ct);
 
-        var query = "SELECT outline_id, vector_data FROM document_outlines_vector;";
-        var candidates = new List<(Guid OutlineId, float[] Vector)>();
+        using var reader = await table.Query()
+            .NearestTo(queryVector)
+            .Limit(topK)
+            .ToBatches();
 
-        using (var command = new SqliteCommand(query, connection))
-        using (var reader = await command.ExecuteReaderAsync(ct))
+        var results = new List<(Guid OutlineId, float Score)>();
+
+        await foreach (var batch in reader)
         {
-            while (await reader.ReadAsync(ct))
+            var idColumn = batch.Column("outline_id") as StringArray;
+            var distanceColumn = batch.Column("_distance") as FloatArray;
+
+            if (idColumn != null && distanceColumn != null)
             {
-                var id = Guid.Parse(reader.GetString(0));
-                var bytes = (byte[])reader.GetValue(1);
-                candidates.Add((id, BytesToFloatArray(bytes)));
+                for (int i = 0; i < batch.Length; i++)
+                {
+                    var idStr = idColumn.GetString(i);
+                    if (Guid.TryParse(idStr, out var id))
+                    {
+                        var distance = distanceColumn.GetValue(i) ?? 0.0f;
+                        // Translate cosine distance (1 - similarity) to similarity score
+                        var score = 1.0f - distance;
+                        results.Add((id, score));
+                    }
+                }
             }
         }
 
-        var results = candidates
-            .Select(c => (c.OutlineId, Score: CalculateCosineSimilarity(queryVector, c.Vector)))
-            .OrderByDescending(r => r.Score)
-            .Take(topK)
-            .ToList();
-
-        return results;
+        return results.OrderByDescending(r => r.Score).Take(topK).ToList();
     }
 
     // ── 知識條目向量表 (knowledge_entries_vector) ──────────────────────────
@@ -92,103 +167,85 @@ public sealed class LanceDbClient : ILanceDbClient
     public async Task UpsertEntryVectorAsync(
         Guid entryId, string title, float[] vector, CancellationToken ct = default)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        var connection = await GetConnectionAsync(ct);
+        var table = await GetOrCreateTableAsync(connection, "knowledge_entries_vector", vector.Length, ct);
 
-        var query = @"
-            INSERT INTO knowledge_entries_vector (entry_id, title, vector_data)
-            VALUES ($id, $title, $vector)
-            ON CONFLICT(entry_id) DO UPDATE SET title = $title, vector_data = $vector;
-        ";
+        // Delete if exists to avoid duplicates
+        await table.Delete($"entry_id = '{entryId}'");
 
-        using var command = new SqliteCommand(query, connection);
-        command.Parameters.AddWithValue("$id", entryId.ToString());
-        command.Parameters.AddWithValue("$title", title);
-        command.Parameters.AddWithValue("$vector", FloatArrayToBytes(vector));
+        var schema = CreateSchema("knowledge_entries_vector", vector.Length);
+        
+        var idArray = new StringArray.Builder().Append(entryId.ToString()).Build();
+        var titleArray = new StringArray.Builder().Append(title).Build();
 
-        await command.ExecuteNonQueryAsync(ct);
+        var listBuilder = new FixedSizeListArray.Builder(FloatType.Default, vector.Length);
+        listBuilder.Append();
+        var floatBuilder = (FloatArray.Builder)listBuilder.ValueBuilder;
+        foreach (var val in vector)
+        {
+            floatBuilder.Append(val);
+        }
+        var vectorArray = listBuilder.Build();
+
+        using var batch = new RecordBatch(schema, new IArrowArray[] { idArray, titleArray, vectorArray }, 1);
+        await table.Add(batch);
     }
 
     public async Task<IReadOnlyList<(Guid EntryId, float Score)>> SearchEntryVectorsAsync(
         float[] queryVector, int topK, CancellationToken ct = default)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
+        var connection = await GetConnectionAsync(ct);
+        var table = await GetOrCreateTableAsync(connection, "knowledge_entries_vector", queryVector.Length, ct);
 
-        var query = "SELECT entry_id, vector_data FROM knowledge_entries_vector;";
-        var candidates = new List<(Guid EntryId, float[] Vector)>();
+        using var reader = await table.Query()
+            .NearestTo(queryVector)
+            .Limit(topK)
+            .ToBatches();
 
-        using (var command = new SqliteCommand(query, connection))
-        using (var reader = await command.ExecuteReaderAsync(ct))
+        var results = new List<(Guid EntryId, float Score)>();
+
+        await foreach (var batch in reader)
         {
-            while (await reader.ReadAsync(ct))
+            var idColumn = batch.Column("entry_id") as StringArray;
+            var distanceColumn = batch.Column("_distance") as FloatArray;
+
+            if (idColumn != null && distanceColumn != null)
             {
-                var id = Guid.Parse(reader.GetString(0));
-                var bytes = (byte[])reader.GetValue(1);
-                candidates.Add((id, BytesToFloatArray(bytes)));
+                for (int i = 0; i < batch.Length; i++)
+                {
+                    var idStr = idColumn.GetString(i);
+                    if (Guid.TryParse(idStr, out var id))
+                    {
+                        var distance = distanceColumn.GetValue(i) ?? 0.0f;
+                        // Translate cosine distance (1 - similarity) to similarity score
+                        var score = 1.0f - distance;
+                        results.Add((id, score));
+                    }
+                }
             }
         }
 
-        var results = candidates
-            .Select(c => (c.EntryId, Score: CalculateCosineSimilarity(queryVector, c.Vector)))
-            .OrderByDescending(r => r.Score)
-            .Take(topK)
-            .ToList();
-
-        return results;
+        return results.OrderByDescending(r => r.Score).Take(topK).ToList();
     }
 
     public async Task DeleteEntryVectorAsync(Guid entryId, CancellationToken ct = default)
     {
-        using var connection = new SqliteConnection(_connectionString);
-        await connection.OpenAsync(ct);
-
-        var query = "DELETE FROM knowledge_entries_vector WHERE entry_id = $id;";
-        using var command = new SqliteCommand(query, connection);
-        command.Parameters.AddWithValue("$id", entryId.ToString());
-
-        await command.ExecuteNonQueryAsync(ct);
-    }
-
-    // ── 向量轉換與運算輔助方法 ──────────────────────────────────────────
-
-    private static byte[] FloatArrayToBytes(float[] values)
-    {
-        var bytes = new byte[values.Length * sizeof(float)];
-        Buffer.BlockCopy(values, 0, bytes, 0, bytes.Length);
-        return bytes;
-    }
-
-    private static float[] BytesToFloatArray(byte[] bytes)
-    {
-        var floats = new float[bytes.Length / sizeof(float)];
-        Buffer.BlockCopy(bytes, 0, floats, 0, bytes.Length);
-        return floats;
-    }
-
-    private static float CalculateCosineSimilarity(float[] vecA, float[] vecB)
-    {
-        if (vecA.Length != vecB.Length || vecA.Length == 0)
+        var connection = await GetConnectionAsync(ct);
+        var tables = await connection.TableNames();
+        if (!tables.Contains("knowledge_entries_vector"))
         {
-            return 0.0f;
+            return;
         }
 
-        float dotProduct = 0.0f;
-        float normA = 0.0f;
-        float normB = 0.0f;
+        var table = await connection.OpenTable("knowledge_entries_vector");
+        await table.Delete($"entry_id = '{entryId}'");
+    }
 
-        for (int i = 0; i < vecA.Length; i++)
-        {
-            dotProduct += vecA[i] * vecB[i];
-            normA += vecA[i] * vecA[i];
-            normB += vecB[i] * vecB[i];
-        }
-
-        if (normA == 0.0f || normB == 0.0f)
-        {
-            return 0.0f;
-        }
-
-        return dotProduct / (MathF.Sqrt(normA) * MathF.Sqrt(normB));
+    public void Dispose()
+    {
+        if (_isDisposed) return;
+        _connection?.Dispose();
+        _lock.Dispose();
+        _isDisposed = true;
     }
 }

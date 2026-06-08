@@ -20,6 +20,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Apache.Arrow" Version="23.0.0" />
+    <PackageReference Include="LanceDB" Version="2.4.1" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.8" />
   </ItemGroup>
 
