@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <RootNamespace>Assistant.Core</RootNamespace>
+
+    <!--
+      Native AOT 相容設定：
+      此 Class Library 本身不啟用 PublishAot（由 Assistant.App 主程式設定），
+      但需確保程式碼本身符合 AOT 限制：
+        - 禁用反射型 JSON 序列化（使用 Source Generator）
+        - 不使用 dynamic / Activator.CreateInstance 等動態程式碼
+    -->
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <IsTrimmable>true</IsTrimmable>
+    <TrimmerRootDescriptor>TrimmerRoots.xml</TrimmerRootDescriptor>
+  </PropertyGroup>
+
+  <!--
+    TODO: 加入套件後請確認各套件的 AOT 相容性：
+      - LanceDB .NET SDK (Native Interop)
+      - System.Data.SQLite 或 Microsoft.Data.Sqlite
+  -->
+
+</Project>

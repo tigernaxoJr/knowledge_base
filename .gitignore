@@ -1,0 +1,32 @@
+# ── .NET ──────────────────────────────────────────────────────────────────────
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.DotSettings.user
+
+# 發布輸出
+publish/
+out/
+
+# ── Frontend (src/frontend/) ───────────────────────────────────────────────────
+src/frontend/node_modules/
+src/frontend/dist/
+src/frontend/.pnpm-debug.log
+
+# ── 作業系統 ──────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 編輯器 ───────────────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+
+# ── 機密設定（不可納入版控）─────────────────────────────────────────────────
+appsettings.*.json
+!appsettings.json
+secrets.json
