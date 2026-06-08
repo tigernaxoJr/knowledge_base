@@ -416,7 +416,7 @@ src/
 | 工具 | 版本要求 | 用途 |
 |------|----------|------|
 | Node.js | ≥ 20 LTS | 前端開發執行環境 |
-| npm / pnpm | npm ≥ 10 或 pnpm ≥ 9 | 套件管理 |
+| pnpm | ≥ 9 | 套件管理 |
 | Vite | ≥ 5.x | 開發伺服器 & 生產建置打包 |
 | Vue 3 | ≥ 3.4 | UI 框架（Composition API） |
 | TypeScript | ≥ 5.x | 型別安全 |
@@ -429,8 +429,8 @@ src/
 #### 開發模式（熱重載 HMR）
 ```bash
 cd src/frontend
-npm install        # 安裝依賴（首次或 package.json 變更後）
-npm run dev        # 啟動 Vite Dev Server（僅供前端 UI 開發除錯用）
+pnpm install        # 安裝依賴（首次或 package.json 變更後）
+pnpm run dev        # 啟動 Vite Dev Server（僅供前端 UI 開發除錯用）
 ```
 > **注意**：Dev Server 模式下，WebView 需指向 `http://localhost:5173`（或 Vite 設定的 port）。  
 > 此模式**不**用於正式執行，僅作為前端開發的快速迭代環境。
@@ -438,10 +438,10 @@ npm run dev        # 啟動 Vite Dev Server（僅供前端 UI 開發除錯用）
 #### 生產建置（輸出靜態資產）
 ```bash
 cd src/frontend
-npm install        # 確保依賴安裝
-npm run build      # 執行 Vite 生產建置，輸出至 dist/
+pnpm install        # 確保依賴安裝
+pnpm run build      # 執行 Vite 生產建置，輸出至 dist/
 ```
-`npm run build` 等效於 `vite build`，會產生：
+`pnpm run build` 等效於 `vite build`，會產生：
 ```
 src/frontend/dist/
 ├── index.html
@@ -507,10 +507,10 @@ export default defineConfig({
 
   <!-- Target 1: 在 .NET 建置前執行前端 Build -->
   <Target Name="BuildFrontend" BeforeTargets="Build;Publish">
-    <Message Text="[Build Pipeline] Running npm install..." Importance="high" />
-    <Exec Command="npm install" WorkingDirectory="$(FrontendDir)" />
+    <Message Text="[Build Pipeline] Running pnpm install..." Importance="high" />
+    <Exec Command="pnpm install" WorkingDirectory="$(FrontendDir)" />
     <Message Text="[Build Pipeline] Running vite build..." Importance="high" />
-    <Exec Command="npm run build" WorkingDirectory="$(FrontendDir)" />
+    <Exec Command="pnpm run build" WorkingDirectory="$(FrontendDir)" />
   </Target>
 
   <!-- Target 2: 將 dist/ 下所有靜態資源宣告為 Embedded Resource -->
@@ -574,8 +574,8 @@ webView.CoreWebView2.Navigate("app://frontend/index.html");
 ```mermaid
 flowchart TD
     A[開發者 git push / CI 觸發] --> B[Checkout 原始碼]
-    B --> C[Node.js 環境準備\nnpm install in src/frontend]
-    C --> D[前端 Build\nnpm run build → dist/]
+    B --> C[Node.js 環境準備\npnpm install in src/frontend]
+    C --> D[前端 Build\npnpm run build → dist/]
     D --> E{Build 成功?}
     E -- 否 --> F[Pipeline 失敗\n回報前端編譯錯誤]
     E -- 是 --> G[.NET Build\ndotnet build\nMSBuild 自動嵌入 dist/]
@@ -590,12 +590,12 @@ flowchart TD
 
 | 步驟 | 指令 | 說明 |
 |------|------|------|
-| 1. 前端安裝依賴 | `npm install` (in `src/frontend/`) | 安裝 node_modules |
-| 2. 前端生產建置 | `npm run build` (in `src/frontend/`) | Vite 輸出 `dist/` |
+| 1. 前端安裝依賴 | `pnpm install` (in `src/frontend/`) | 安裝 node_modules |
+| 2. 前端生產建置 | `pnpm run build` (in `src/frontend/`) | Vite 輸出 `dist/` |
 | 3. .NET 建置 | `dotnet build` (in `src/backend/`) | MSBuild 自動觸發前端 Build 並嵌入資源 |
 | 4. 發布（AOT 編譯） | `dotnet publish -c Release -r win-x64` | 產出 Native AOT 單一執行檔 |
 
-> **注意**：步驟 3 的 MSBuild Target `BuildFrontend` 會再次執行 `npm run build`，因此若確保 `dist/` 已是最新狀態，可在 CI 中透過環境變數跳過重複建置（例如設定 `<Condition>` 判斷 `dist/` 是否存在）。
+> **注意**：步驟 3 的 MSBuild Target `BuildFrontend` 會再次執行 `pnpm run build`，因此若確保 `dist/` 已是最新狀態，可在 CI 中透過環境變數跳過重複建置（例如設定 `<Condition>` 判斷 `dist/` 是否存在）。
 
 ---
 
@@ -603,6 +603,6 @@ flowchart TD
 
 *   **`dist/` 不納入版控**：應在 `.gitignore` 中排除 `src/frontend/dist/`，避免大量編譯產物污染版控。
 *   **`node_modules/` 不納入版控**：同樣排除 `src/frontend/node_modules/`。
-*   **開發階段熱重載**：前端開發期間，可在 `src/frontend/` 執行 `npm run dev` 啟動 Vite Dev Server，並在後端程式碼中以條件編譯（`#if DEBUG`）將 WebView 導向 `http://localhost:5173`，享有 HMR（熱模組替換）的快速開發體驗。
-*   **生產建置驗證**：每次提交前建議執行完整 `npm run build && dotnet build` 確保靜態資產正確嵌入。
+*   **開發階段熱重載**：前端開發期間，可在 `src/frontend/` 執行 `pnpm run dev` 啟動 Vite Dev Server，並在後端程式碼中以條件編譯（`#if DEBUG`）將 WebView 導向 `http://localhost:5173`，享有 HMR（熱模組替換）的快速開發體驗。
+*   **生產建置驗證**：每次提交前建議執行完整 `pnpm run build && dotnet build` 確保靜態資產正確嵌入。
 

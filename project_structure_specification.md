@@ -1,4 +1,4 @@
-# 專案目錄結構規格 (Project Structure Specification)
+﻿# 專案目錄結構規格 (Project Structure Specification)
 
 本文件定義個人知識庫系統的專案目錄結構、各子專案職責邊界，以及解決方案組成。
 
@@ -6,13 +6,13 @@
 
 ## 1. 解決方案總覽
 
-系統由三個子專案組成，採用 **.NET Solution** 統一管理後端，前端為獨立 npm 專案：
+系統由三個子專案組成，採用 **.NET Solution** 統一管理後端，前端為獨立 pnpm 專案：
 
 | 子專案 | 類型 | 技術棧 | 職責 |
 |--------|------|--------|------|
 | `Assistant.Core` | .NET Class Library | .NET 10 Native AOT | 純業務邏輯，無 UI 依賴 |
 | `Assistant.App` | .NET Executable | .NET 10 Native AOT | App 進入點、WebView 宿主、IPC 橋接 |
-| `frontend` | npm 專案 | Vue 3 + TypeScript + Tailwind CSS | 使用者介面（編譯為靜態資產嵌入 App） |
+| `frontend` | pnpm 專案 | Vue 3 + TypeScript + Tailwind CSS | 使用者介面（編譯為靜態資產嵌入 App） |
 
 ---
 
@@ -53,7 +53,7 @@ assistant/
 │   │   ├── IpcBridge.cs                 # postMessage 收發、命令路由至 Core
 │   │   └── ResourceLoader.cs            # 從 Embedded Resources 回應靜態資產
 │   │
-│   └── frontend/                        ← Vue 3 獨立 npm 專案（UI 層）
+│   └── frontend/                        ← Vue 3 獨立 pnpm 專案（UI 層）
 │       ├── package.json
 │       ├── vite.config.ts               # base: './'，固定輸出檔名（無 hash）
 │       ├── tsconfig.json
@@ -103,14 +103,14 @@ assistant/
     *   啟動 WebView2（Windows）或 Photino（跨平台），載入 `app://frontend/index.html`。
     *   實作 Local URI Scheme 攔截，將 `app://*` 請求映射至嵌入資源。
     *   IPC 橋接：接收前端 `postMessage` → 解析命令 → 呼叫 `Core` 對應服務 → 回傳 JSON 結果。
-    *   MSBuild Target：在 `dotnet build` / `dotnet publish` 前自動執行 `npm run build`，並將 `dist/` 內容宣告為 Embedded Resources。
+    *   MSBuild Target：在 `dotnet build` / `dotnet publish` 前自動執行 `pnpm run build`，並將 `dist/` 內容宣告為 Embedded Resources。
 *   **不含業務邏輯**：所有 AI、DB、LLM 操作均委派給 `Assistant.Core`。
 
 ### 3.3 `frontend/` — 使用者介面
 
-*   **獨立開發**：可在不啟動後端的情況下，以 `npm run dev` 開發 UI（搭配 Mock IPC）。
+*   **獨立開發**：可在不啟動後端的情況下，以 `pnpm run dev` 開發 UI（搭配 Mock IPC）。
 *   **IPC 封裝**：`src/ipc/bridge.ts` 統一封裝 `window.chrome.webview.postMessage`，避免前端各元件直接耦合 IPC 細節。
-*   **生產建置**：`npm run build` 輸出 `dist/`，由 `Assistant.App.csproj` 的 MSBuild Target 打包為嵌入資源。
+*   **生產建置**：`pnpm run build` 輸出 `dist/`，由 `Assistant.App.csproj` 的 MSBuild Target 打包為嵌入資源。
 
 ---
 
@@ -162,4 +162,4 @@ dotnet sln add src/Assistant.App/Assistant.App.csproj
 dotnet sln add tests/Assistant.Core.Tests/Assistant.Core.Tests.csproj
 ```
 
-前端 `frontend/` 為獨立 npm 專案，不加入 `.sln`，由 `Assistant.App.csproj` 的 MSBuild Target 驅動建置。
+前端 `frontend/` 為獨立 pnpm 專案，不加入 `.sln`，由 `Assistant.App.csproj` 的 MSBuild Target 驅動建置。
