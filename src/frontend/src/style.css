@@ -1,0 +1,51 @@
+@import "tailwindcss";
+
+/* ── 設計系統：CSS 變數 ────────────────────────────────────────────────────── */
+:root {
+  --color-bg-base:      #0f1117;
+  --color-bg-surface:   #1a1d27;
+  --color-bg-elevated:  #22263a;
+  --color-border:       rgba(255, 255, 255, 0.08);
+  --color-text-primary: #e8eaf0;
+  --color-text-muted:   #8b90a4;
+  --color-accent:       #6366f1;        /* indigo-500 */
+  --color-accent-glow:  rgba(99, 102, 241, 0.25);
+
+  --radius-sm:  6px;
+  --radius-md:  12px;
+  --radius-lg:  20px;
+
+  --shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md:  0 4px 16px rgba(0, 0, 0, 0.5);
+  --shadow-glow: 0 0 24px var(--color-accent-glow);
+
+  --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── 基礎重設 ─────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--color-bg-base);
+  color: var(--color-text-primary);
+  font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── 卷軸樣式 ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
