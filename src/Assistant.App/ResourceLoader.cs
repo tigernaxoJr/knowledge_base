@@ -26,7 +26,8 @@ internal sealed class ResourceLoader
     /// </returns>
     public (Stream? Stream, string? ContentType) Load(string resourcePath)
     {
-        var stream = _assembly.GetManifestResourceStream(resourcePath);
+        var stream = _assembly.GetManifestResourceStream(resourcePath)
+                     ?? _assembly.GetManifestResourceStream(resourcePath.Replace('/', '\\'));
         if (stream is null) return (null, null);
 
         var contentType = GetContentType(resourcePath);

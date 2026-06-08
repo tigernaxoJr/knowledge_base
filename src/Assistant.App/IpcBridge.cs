@@ -1,5 +1,10 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Assistant.Core.Config;
+using Assistant.Core.Ingestion;
+using Assistant.Core.KnowledgeBase;
+using Assistant.Core.Search;
+using Assistant.Core.LlmClient;
 
 namespace Assistant.App;
 
@@ -32,8 +37,80 @@ internal sealed class IpcResponse
     public string? Error { get; set; }
 }
 
+// ── 各命令專用 Payload DTO ──────────────────────────────────────────────────
+
+internal sealed class IngestPayload
+{
+    [JsonPropertyName("content")]
+    public string Content { get; set; } = string.Empty;
+
+    [JsonPropertyName("source")]
+    public string Source { get; set; } = string.Empty;
+}
+
+internal sealed class EntryGetPayload
+{
+    [JsonPropertyName("entryId")]
+    public Guid EntryId { get; set; }
+}
+
+internal sealed class RollbackPayload
+{
+    [JsonPropertyName("entryId")]
+    public Guid EntryId { get; set; }
+
+    [JsonPropertyName("version")]
+    public int Version { get; set; }
+}
+
+internal sealed class HistoryPayload
+{
+    [JsonPropertyName("entryId")]
+    public Guid EntryId { get; set; }
+}
+
+internal sealed class SearchPayload
+{
+    [JsonPropertyName("query")]
+    public string Query { get; set; } = string.Empty;
+}
+
+internal sealed class TestConfigPayload
+{
+    [JsonPropertyName("endpoint")]
+    public string Endpoint { get; set; } = string.Empty;
+
+    [JsonPropertyName("apiKey")]
+    public string ApiKey { get; set; } = string.Empty;
+
+    [JsonPropertyName("modelName")]
+    public string ModelName { get; set; } = string.Empty;
+}
+
+internal sealed class TestConfigResult
+{
+    [JsonPropertyName("success")]
+    public bool Success { get; set; }
+
+    [JsonPropertyName("errorMessage")]
+    public string? ErrorMessage { get; set; }
+}
+
+// ── AOT-safe Source-generated Serialization Context ──────────────────────
+
 [JsonSerializable(typeof(IpcRequest))]
 [JsonSerializable(typeof(IpcResponse))]
+[JsonSerializable(typeof(IngestPayload))]
+[JsonSerializable(typeof(EntryGetPayload))]
+[JsonSerializable(typeof(RollbackPayload))]
+[JsonSerializable(typeof(HistoryPayload))]
+[JsonSerializable(typeof(SearchPayload))]
+[JsonSerializable(typeof(TestConfigPayload))]
+[JsonSerializable(typeof(TestConfigResult))]
+[JsonSerializable(typeof(AppSettings))]
+[JsonSerializable(typeof(KnowledgeEntry))]
+[JsonSerializable(typeof(List<SearchResult>))]
+[JsonSerializable(typeof(List<KnowledgeVersion>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class IpcJsonContext : JsonSerializerContext { }
 
@@ -42,10 +119,28 @@ internal partial class IpcJsonContext : JsonSerializerContext { }
 /// </summary>
 internal sealed class IpcBridge
 {
-    // TODO: 注入 Core 服務
-    // private readonly IIngestionService _ingestion;
-    // private readonly IKnowledgeEntryService _knowledge;
-    // private readonly IConfigService _config;
+    private readonly IIngestionService _ingestion;
+    private readonly IKnowledgeEntryService _knowledge;
+    private readonly IConfigService _config;
+    private readonly IVersionControlService _versionControl;
+    private readonly IVectorSearchEngine _searchEngine;
+    private readonly ILlmClientFactory _llmClientFactory;
+
+    public IpcBridge(
+        IIngestionService ingestion,
+        IKnowledgeEntryService knowledge,
+        IConfigService config,
+        IVersionControlService versionControl,
+        IVectorSearchEngine searchEngine,
+        ILlmClientFactory llmClientFactory)
+    {
+        _ingestion = ingestion;
+        _knowledge = knowledge;
+        _config = config;
+        _versionControl = versionControl;
+        _searchEngine = searchEngine;
+        _llmClientFactory = llmClientFactory;
+    }
 
     /// <summary>處理單一 IPC 請求，回傳序列化後的 JSON 回應字串</summary>
     public async Task<string> HandleAsync(string requestJson)
@@ -72,9 +167,13 @@ internal sealed class IpcBridge
         // ── 文件導入 ──────────────────────────────────────────────────────
         "ingest" => HandleIngestAsync(request),
 
+        // ── 知識檢索與查詢 ──────────────────────────────────────────────────
+        "search" => HandleSearchAsync(request),
+
         // ── 知識條目查詢 ──────────────────────────────────────────────────
         "entry.get"      => HandleEntryGetAsync(request),
         "entry.rollback" => HandleEntryRollbackAsync(request),
+        "entry.history"  => HandleEntryHistoryAsync(request),
 
         // ── 設定管理 ──────────────────────────────────────────────────────
         "config.load"    => HandleConfigLoadAsync(request),
@@ -85,43 +184,82 @@ internal sealed class IpcBridge
         _ => throw new NotSupportedException($"Unknown command: {request.Command}")
     };
 
-    // ── 各命令處理器（暫以 stub 實作，等待 Core 服務注入後替換）─────────────
+    // ── 各命令處理器 ─────────────────────────────────────────────────────────
 
-    private Task<object?> HandleIngestAsync(IpcRequest req)
+    private async Task<object?> HandleIngestAsync(IpcRequest req)
     {
-        // TODO: var doc = req.Payload.Deserialize(...); await _ingestion.IngestAsync(doc);
-        return Task.FromResult<object?>(null);
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.IngestPayload);
+        if (payload == null) throw new ArgumentException("Invalid IngestPayload");
+
+        var doc = new RawDocument
+        {
+            Content = payload.Content,
+            Source = payload.Source
+        };
+        await _ingestion.IngestAsync(doc);
+        return null;
     }
 
-    private Task<object?> HandleEntryGetAsync(IpcRequest req)
+    private async Task<object?> HandleSearchAsync(IpcRequest req)
     {
-        // TODO: var id = req.Payload.GetProperty("entryId").GetGuid();
-        //       return await _knowledge.GetAsync(id);
-        return Task.FromResult<object?>(null);
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.SearchPayload);
+        if (payload == null) throw new ArgumentException("Invalid SearchPayload");
+
+        var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
+        var queryVector = await embeddingClient.EmbedAsync(payload.Query);
+
+        var results = await _searchEngine.SearchKnowledgeEntriesAsync(queryVector, topK: 10);
+        return results.ToList();
     }
 
-    private Task<object?> HandleEntryRollbackAsync(IpcRequest req)
+    private async Task<object?> HandleEntryGetAsync(IpcRequest req)
     {
-        // TODO: implement rollback
-        return Task.FromResult<object?>(null);
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.EntryGetPayload);
+        if (payload == null) throw new ArgumentException("Invalid EntryGetPayload");
+
+        return await _knowledge.GetAsync(payload.EntryId);
     }
 
-    private Task<object?> HandleConfigLoadAsync(IpcRequest req)
+    private async Task<object?> HandleEntryRollbackAsync(IpcRequest req)
     {
-        // TODO: return await _config.LoadAsync();
-        return Task.FromResult<object?>(null);
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.RollbackPayload);
+        if (payload == null) throw new ArgumentException("Invalid RollbackPayload");
+
+        await _knowledge.RollbackAsync(payload.EntryId, payload.Version);
+        return null;
     }
 
-    private Task<object?> HandleConfigSaveAsync(IpcRequest req)
+    private async Task<object?> HandleEntryHistoryAsync(IpcRequest req)
     {
-        // TODO: implement config save
-        return Task.FromResult<object?>(null);
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.HistoryPayload);
+        if (payload == null) throw new ArgumentException("Invalid HistoryPayload");
+
+        var history = await _versionControl.GetHistoryAsync(payload.EntryId);
+        return history.ToList();
     }
 
-    private Task<object?> HandleConfigTestAsync(IpcRequest req)
+    private async Task<object?> HandleConfigLoadAsync(IpcRequest req)
     {
-        // TODO: implement connection test
-        return Task.FromResult<object?>(null);
+        return await _config.LoadAsync();
+    }
+
+    private async Task<object?> HandleConfigSaveAsync(IpcRequest req)
+    {
+        var settings = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.AppSettings);
+        if (settings == null) throw new ArgumentException("Invalid AppSettings");
+
+        await _config.SaveAsync(settings);
+        _llmClientFactory.Reload();
+        return null;
+    }
+
+    private async Task<object?> HandleConfigTestAsync(IpcRequest req)
+    {
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.TestConfigPayload);
+        if (payload == null) throw new ArgumentException("Invalid TestConfigPayload");
+
+        var (success, errorMessage) = await _config.TestConnectionAsync(payload.Endpoint, payload.ApiKey, payload.ModelName);
+        return new TestConfigResult { Success = success, ErrorMessage = errorMessage };
     }
 
     // ── 輔助方法 ──────────────────────────────────────────────────────────
