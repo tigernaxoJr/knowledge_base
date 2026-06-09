@@ -30,7 +30,12 @@ public sealed class EmbeddingClient : IEmbeddingClient
             return Array.Empty<float[]>();
         }
 
-        var requestUrl = _config.Endpoint.TrimEnd('/') + "/embeddings";
+        var endpoint = _config.Endpoint;
+        if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException("向量模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置向量模型端點與 API 金鑰！");
+        }
+        var requestUrl = endpoint.TrimEnd('/') + "/embeddings";
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
         if (!string.IsNullOrEmpty(_config.ApiKey))

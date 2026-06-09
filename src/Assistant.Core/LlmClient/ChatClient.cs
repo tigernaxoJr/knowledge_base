@@ -18,7 +18,12 @@ public sealed class ChatClient : IChatClient
 
     public async Task<string> CompleteAsync(string systemPrompt, string userMessage, CancellationToken ct = default)
     {
-        var requestUrl = _config.Endpoint.TrimEnd('/') + "/chat/completions";
+        var endpoint = _config.Endpoint;
+        if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out _))
+        {
+            throw new InvalidOperationException("大模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置大模型端點與 API 金鑰！");
+        }
+        var requestUrl = endpoint.TrimEnd('/') + "/chat/completions";
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
         if (!string.IsNullOrEmpty(_config.ApiKey))
