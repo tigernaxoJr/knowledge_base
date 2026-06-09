@@ -43,7 +43,7 @@
   -->
   <Target Name="BuildFrontend"
           BeforeTargets="IncludeFrontendDist"
-          Condition="!Exists('$(FrontendDistDir)/index.html') Or '$(FORCE_FRONTEND_BUILD)' == '1'">
+          Condition="'$(SkipFrontendBuild)' != 'true' And (!Exists('$(FrontendDistDir)/index.html') Or '$(FORCE_FRONTEND_BUILD)' == '1')">
     <Message Text="[Build Pipeline] Installing frontend dependencies..." Importance="high" />
     <Exec Command="pnpm install" WorkingDirectory="$(FrontendDir)" />
     <Message Text="[Build Pipeline] Building frontend with Vite..." Importance="high" />

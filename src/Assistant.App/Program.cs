@@ -21,6 +21,7 @@ internal static class Program
         services.AddSingleton<Assistant.Core.Storage.IRelationalRepository, Assistant.Core.Storage.SqliteRepository>();
         services.AddSingleton<Assistant.Core.Storage.ILanceDbClient, Assistant.Core.Storage.LanceDbClient>();
         services.AddSingleton<Assistant.Core.LlmClient.ILlmClientFactory, Assistant.Core.LlmClient.LlmClientFactory>();
+        services.AddSingleton<Assistant.Core.Prompts.IPromptProvider, Assistant.Core.Prompts.DefaultPromptProvider>();
         services.AddSingleton<Assistant.Core.Ingestion.IOutlineGenerator, Assistant.Core.Ingestion.OutlineGenerator>();
         services.AddSingleton<Assistant.Core.Search.IVectorSearchEngine, Assistant.Core.Search.VectorSearchEngine>();
         services.AddSingleton<Assistant.Core.Search.IRoutingDecision, Assistant.Core.Search.RoutingDecision>();
