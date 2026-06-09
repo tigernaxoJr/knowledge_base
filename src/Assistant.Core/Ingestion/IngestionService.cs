@@ -92,18 +92,26 @@ public sealed class IngestionService(
             var outlines = new List<string>();
             var outlineIds = new List<Guid>();
 
-            foreach (var doc in docList)
+            // 1. Concurrent outline generation
+            var outlineTasks = docList.Select(async doc =>
             {
-                await _relationalRepository.InsertDocumentAsync(
-                    doc.DocumentId, doc.Content, doc.Source, doc.CreatedAt, ct);
-
                 var summary = await _outlineGenerator.GenerateOutlineAsync(doc.Content, ct);
                 var outlineId = Guid.NewGuid();
+                return (Doc: doc, Summary: summary, OutlineId: outlineId);
+            }).ToList();
 
-                await _relationalRepository.InsertOutlineAsync(outlineId, doc.DocumentId, summary, ct);
+            var outlineResults = await Task.WhenAll(outlineTasks);
 
-                outlines.Add(summary);
-                outlineIds.Add(outlineId);
+            // 2. Sequential database writes
+            foreach (var res in outlineResults)
+            {
+                await _relationalRepository.InsertDocumentAsync(
+                    res.Doc.DocumentId, res.Doc.Content, res.Doc.Source, res.Doc.CreatedAt, ct);
+
+                await _relationalRepository.InsertOutlineAsync(res.OutlineId, res.Doc.DocumentId, res.Summary, ct);
+
+                outlines.Add(res.Summary);
+                outlineIds.Add(res.OutlineId);
             }
 
             var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
@@ -130,6 +138,8 @@ public sealed class IngestionService(
             }
 
             var chatClient = _llmClientFactory.CreateChatClient();
+            var clusterActions = new List<Func<Task>>();
+            var llmTasks = new List<Task>();
 
             foreach (var kvp in clusters)
             {
@@ -140,10 +150,19 @@ public sealed class IngestionService(
                 {
                     foreach (var item in groupItems)
                     {
-                        var title = await chatClient.CompleteAsync(_prompts.TitleGeneration, item.Summary, ct);
-                        title = title.Trim('\"', '\'', ' ', '\r', '\n');
+                        var currentItem = item;
+                        var llmTask = Task.Run(async () =>
+                        {
+                            var title = await chatClient.CompleteAsync(_prompts.TitleGeneration, currentItem.Summary, ct);
+                            title = title.Trim('\"', '\'', ' ', '\r', '\n');
 
-                        await _knowledgeEntryService.CreateAsync(title, item.Doc.Content, triggerRecluster: false, ct: ct);
+                            lock (clusterActions)
+                            {
+                                clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
+                                    title, currentItem.Doc.Content, triggerRecluster: false, ct: ct));
+                            }
+                        }, ct);
+                        llmTasks.Add(llmTask);
                     }
                 }
                 else
@@ -161,15 +180,35 @@ public sealed class IngestionService(
                         combinedSummariesBuilder.AppendLine($"- Outline {i + 1}: {item.Summary}");
                     }
 
-                    var clusterTitle = await chatClient.CompleteAsync(
-                        _prompts.MultiDocumentTitleGeneration, combinedSummariesBuilder.ToString(), ct);
-                    clusterTitle = clusterTitle.Trim('\"', '\'', ' ', '\r', '\n');
+                    var combinedSummaries = combinedSummariesBuilder.ToString();
+                    var mergedContentRaw = mergedContentBuilder.ToString();
 
-                    var mergedContent = await chatClient.CompleteAsync(
-                        _prompts.MultiDocumentMerge, mergedContentBuilder.ToString(), ct);
+                    var llmTask = Task.Run(async () =>
+                    {
+                        var titleTask = chatClient.CompleteAsync(_prompts.MultiDocumentTitleGeneration, combinedSummaries, ct);
+                        var mergeTask = chatClient.CompleteAsync(_prompts.MultiDocumentMerge, mergedContentRaw, ct);
 
-                    await _knowledgeEntryService.CreateAsync(clusterTitle, mergedContent, triggerRecluster: false, ct: ct);
+                        await Task.WhenAll(titleTask, mergeTask);
+
+                        var title = (await titleTask).Trim('\"', '\'', ' ', '\r', '\n');
+                        var mergedContent = await mergeTask;
+
+                        lock (clusterActions)
+                        {
+                            clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
+                                title, mergedContent, triggerRecluster: false, ct: ct));
+                        }
+                    }, ct);
+                    llmTasks.Add(llmTask);
                 }
+            }
+
+            await Task.WhenAll(llmTasks);
+
+            // Execute DB writes sequentially to avoid SQLite locking
+            foreach (var action in clusterActions)
+            {
+                await action();
             }
 
             await _clusterService.ReclusterAsync(ct);
