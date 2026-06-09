@@ -101,14 +101,15 @@ internal sealed class WebViewHost(IpcBridge ipcBridge, ResourceLoader resourceLo
 
     private void OnOutboundMessage(string message)
     {
-        if (_form is null || _webView?.CoreWebView2 is null) return;
+        if (_form is null) return;
 
         if (_form.InvokeRequired)
         {
-            _form.BeginInvoke(() => _webView?.CoreWebView2?.PostWebMessageAsString(message));
+            _form.BeginInvoke(() => OnOutboundMessage(message));
             return;
         }
 
+        if (_webView?.CoreWebView2 is null) return;
         _webView.CoreWebView2.PostWebMessageAsString(message);
     }
 
