@@ -58,24 +58,31 @@ public class ClusterServiceTests
             Assert.Equal(dockerCluster.ClusterId, entry2.ClusterId);
             Assert.Equal(vueCluster.ClusterId, entry3.ClusterId);
 
-            // 4. Test Inheritance: Add a new entry to the Docker cluster, and recluster
+            // 4. Test member-change detection: Add a new entry to the Docker cluster, and recluster
             var id4 = await repository.InsertEntryAsync("Docker Registry Config", "Content 4");
             lanceDb.Vectors[id4] = new[] { 0.95f, 0.02f, 0.0f };
             
             // DBSCAN labels: id1, id2, id4 are cluster 0. id3 is cluster 1.
             engine.ClusterLabels = new[] { 0, 0, 1, 0 };
 
-            // Recluster should inherit name "Docker 容器" for cluster 0 because of overlap
-            llmFactory.GeneratedNames.Clear(); // No LLM calls should be made since all clusters are inherited!
+            // Docker cluster gains id4 → members changed → LLM regenerates name
+            // Vue cluster stays {id3} → members unchanged → name inherited
+            llmFactory.GeneratedNames.Clear();
+            llmFactory.GeneratedNames.Enqueue("Docker 部署技術");
 
             await service.ReclusterAsync();
 
             var clustersAfter = await repository.GetClustersAsync();
             Assert.Equal(2, clustersAfter.Count);
             
+            // Docker cluster should have the REGENERATED name since members changed
             var dockerClusterAfter = clustersAfter.FirstOrDefault(c => c.ClusterId == dockerCluster.ClusterId);
             Assert.NotEqual(Guid.Empty, dockerClusterAfter.ClusterId);
-            Assert.Equal("Docker 容器", dockerClusterAfter.Name);
+            Assert.Equal("Docker 部署技術", dockerClusterAfter.Name);
+
+            // Vue cluster should keep the inherited name since members are unchanged
+            var vueClusterAfter = clustersAfter.FirstOrDefault(c => c.ClusterId == vueCluster.ClusterId);
+            Assert.Equal("Vue 前端", vueClusterAfter.Name);
 
             var entriesAfter = await repository.GetEntriesWithClusterAsync();
             var entry4 = entriesAfter.First(e => e.EntryId == id4);

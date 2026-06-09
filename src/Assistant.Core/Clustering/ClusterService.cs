@@ -104,23 +104,29 @@ public sealed class ClusterService(
             if (matchedClusterId.HasValue)
             {
                 clusterId = matchedClusterId.Value;
-                clusterName = existingClusterNames[clusterId];
                 matchedExistingClusters.Add(clusterId);
+
+                // Check if member composition has changed
+                var existingMemberSet = existingClusterToEntries[clusterId];
+                bool membersChanged = !newSet.SetEquals(existingMemberSet);
+
+                if (membersChanged)
+                {
+                    // Members changed → force LLM to regenerate cluster name
+                    var groupEntries = validEntries.Where(e => newSet.Contains(e.EntryId)).ToList();
+                    clusterName = await GenerateClusterNameAsync(groupEntries, chatClient, ct);
+                }
+                else
+                {
+                    // Members identical → keep existing name
+                    clusterName = existingClusterNames[clusterId];
+                }
             }
             else
             {
                 clusterId = Guid.NewGuid();
-                // Generate new cluster name using LLM
                 var groupEntries = validEntries.Where(e => newSet.Contains(e.EntryId)).ToList();
-                var titles = string.Join("\n", groupEntries.Select(e => $"- {e.Title}"));
-                var prompt = $"你是一個知識庫管理專家。請針對以下這一組相關知識條目的標題，產生一個簡短（10個字以內）、具代表性的分類名稱（例如「Docker 部署」、「ASP.NET 架構」、「CSS 設計」等）。請直接輸出繁體中文名稱，不要有額外的說明或引號：\n\n{titles}";
-                
-                var name = await chatClient.CompleteAsync(string.Empty, prompt, ct);
-                clusterName = name.Trim('"', '\'', ' ', '\r', '\n');
-                if (string.IsNullOrWhiteSpace(clusterName))
-                {
-                    clusterName = $"新主題 {clusterId.ToString().Substring(0, 4)}";
-                }
+                clusterName = await GenerateClusterNameAsync(groupEntries, chatClient, ct);
             }
 
             finalClusterAssignments[clusterId] = (clusterName, newGroup);
@@ -182,5 +188,29 @@ public sealed class ClusterService(
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// 使用 LLM 為分群產生代表性名稱。
+    /// 當成員涵蓋多個不同領域時，prompt 引導 LLM 使用更通用的上位詞。
+    /// </summary>
+    private static async Task<string> GenerateClusterNameAsync(
+        List<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)> entries,
+        IChatClient chatClient,
+        CancellationToken ct)
+    {
+        var titles = string.Join("\n", entries.Select(e => $"- {e.Title}"));
+
+        var prompt =
+            "你是一個知識庫管理專家。請針對以下這一組相關知識條目的標題，" +
+            "產生一個簡短（10個字以內）、具代表性的分類名稱。" +
+            "如果條目涵蓋多個不同領域或主題，請使用更通用的上位概念作為名稱" +
+            "（例如：當同時包含資通安全法與醫療法時，應命名為「台灣法規」而非「資通安全法規」）。" +
+            "請直接輸出繁體中文名稱，不要有額外的說明或引號：\n\n" + titles;
+
+        var name = await chatClient.CompleteAsync(string.Empty, prompt, ct);
+        name = name.Trim('"', '\'', ' ', '\r', '\n');
+
+        return string.IsNullOrWhiteSpace(name) ? "主題群組" : name;
     }
 }

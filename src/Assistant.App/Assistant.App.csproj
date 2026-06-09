@@ -32,6 +32,11 @@
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.8" />
   </ItemGroup>
 
+  <!-- 排除 WebView2 附帶的 WPF 組件（本專案僅使用 WinForms），消除 WindowsBase 版本衝突警告 -->
+  <PropertyGroup>
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+
   <!-- ── 專案參考 ───────────────────────────────────────────────────────── -->
   <ItemGroup>
     <ProjectReference Include="..\Assistant.Core\Assistant.Core.csproj" />
