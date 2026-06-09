@@ -1,11 +1,18 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import MarkdownViewer from '../components/MarkdownViewer.vue'
-import { ipc } from '../ipc/bridge'
+import { ipc, type AssociatedDoc } from '../ipc/bridge'
 
 type ClusterEntry = { entryId: string; title: string; version: number; updatedAt: string }
 type Cluster = { clusterId: string; name: string; entries: ClusterEntry[] }
-type Entry = { entryId: string; title: string; content: string; version: number; updatedAt: string }
+type Entry = {
+  entryId: string
+  title: string
+  content: string
+  version: number
+  updatedAt: string
+  associatedDocs?: AssociatedDoc[]
+}
 
 const clusters = ref<Cluster[]>([])
 const selectedClusterId = ref<string | null>(null)
@@ -13,6 +20,20 @@ const selectedCluster = ref<Cluster | null>(null)
 
 const selectedEntryId = ref<string | null>(null)
 const selectedEntry = ref<Entry | null>(null)
+
+const activeDetailTab = ref<'summary' | 'sources'>('summary')
+const selectedSourceDocId = ref<string | null>(null)
+
+const currentSourceDoc = computed(() => {
+  if (!selectedEntry.value?.associatedDocs) return null
+  return selectedEntry.value.associatedDocs.find(d => d.documentId === selectedSourceDocId.value) || null
+})
+
+function getFilename(path: string): string {
+  if (!path) return ''
+  const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return index !== -1 ? path.substring(index + 1) : path
+}
 
 const isLoading = ref(false)
 const isReclustering = ref(false)
@@ -73,8 +94,14 @@ function selectCluster(cluster: Cluster) {
 async function selectEntry(entryId: string) {
   selectedEntryId.value = entryId
   isEditing.value = false
+  activeDetailTab.value = 'summary'
+  selectedSourceDocId.value = null
   try {
-    selectedEntry.value = await ipc.entry.get(entryId)
+    const data = await ipc.entry.get(entryId)
+    selectedEntry.value = data
+    if (data?.associatedDocs && data.associatedDocs.length > 0) {
+      selectedSourceDocId.value = data.associatedDocs[0].documentId
+    }
   } catch (err) {
     console.error('Failed to load entry details:', err)
   }
@@ -85,6 +112,7 @@ function startEditing() {
   editTitle.value = selectedEntry.value.title
   editContent.value = selectedEntry.value.content
   isEditing.value = true
+  activeDetailTab.value = 'summary'
 }
 
 function cancelEditing() {
@@ -292,8 +320,32 @@ function formatTime(isoString: string): string {
           </div>
         </div>
 
+        <!-- Sub-tabs Navigation -->
+        <div v-if="!isEditing" class="px-6 border-b border-white/5 flex gap-4 bg-[#0a0c10]">
+          <button
+            @click="activeDetailTab = 'summary'"
+            :class="['py-2.5 text-xs font-medium border-b-2 transition-all duration-150',
+              activeDetailTab === 'summary'
+                ? 'border-sky-500 text-sky-400 font-semibold'
+                : 'border-transparent text-[#828b9a] hover:text-white']"
+          >
+            知識總結
+          </button>
+          <button
+            v-if="selectedEntry.associatedDocs && selectedEntry.associatedDocs.length > 0"
+            @click="activeDetailTab = 'sources'"
+            :class="['py-2.5 text-xs font-medium border-b-2 transition-all duration-150',
+              activeDetailTab === 'sources'
+                ? 'border-sky-500 text-sky-400 font-semibold'
+                : 'border-transparent text-[#828b9a] hover:text-white']"
+          >
+            原始文件與大綱 ({{ selectedEntry.associatedDocs.length }} 筆)
+          </button>
+        </div>
+
         <div class="flex-1 flex min-h-0">
-          <div class="flex-1 overflow-y-auto p-6 flex flex-col min-h-0">
+          <!-- Editing Mode or Summary Tab -->
+          <div v-if="isEditing || activeDetailTab === 'summary'" class="flex-1 overflow-y-auto p-6 flex flex-col min-h-0">
             <textarea
               v-if="isEditing"
               v-model="editContent"
@@ -302,6 +354,53 @@ function formatTime(isoString: string): string {
             ></textarea>
             <div v-else class="prose max-w-none text-slate-300">
               <MarkdownViewer :content="selectedEntry.content" />
+            </div>
+          </div>
+
+          <!-- Sources & Outlines Tab -->
+          <div v-else-if="activeDetailTab === 'sources' && selectedEntry.associatedDocs && selectedEntry.associatedDocs.length > 0" class="flex-1 flex min-h-0 divide-x divide-white/5">
+            <!-- Source Docs List (left side of the tab) -->
+            <div class="w-1/4 bg-[#0a0c10] overflow-y-auto p-3 flex flex-col gap-2">
+              <button
+                v-for="doc in selectedEntry.associatedDocs"
+                :key="doc.documentId"
+                @click="selectedSourceDocId = doc.documentId"
+                :class="['w-full text-left p-3 rounded border text-xs transition-all duration-150 flex flex-col gap-1',
+                  selectedSourceDocId === doc.documentId
+                    ? 'bg-white/[0.02] border-sky-500 text-sky-400 font-semibold'
+                    : 'bg-transparent border-transparent text-[#828b9a] hover:bg-white/[0.015] hover:border-white/5 hover:text-white']"
+              >
+                <span class="truncate">{{ getFilename(doc.source) }}</span>
+              </button>
+            </div>
+
+            <!-- Selected Source Doc Detail (right side of the tab) -->
+            <div class="flex-1 flex min-h-0 divide-x divide-white/5">
+              <template v-if="currentSourceDoc">
+                <!-- Raw Content (left pane) -->
+                <div class="w-1/2 flex flex-col h-full overflow-hidden">
+                  <div class="p-3 border-b border-white/5 bg-[#0a0c10]/50 text-xs font-semibold text-[#828b9a] flex items-center justify-between">
+                    <span>原始文件內容</span>
+                    <span class="text-[10px] text-[#5c6370] font-mono">{{ getFilename(currentSourceDoc.source) }}</span>
+                  </div>
+                  <div class="flex-1 p-4 overflow-y-auto bg-[#0a0c10]/35">
+                    <pre class="text-xs text-slate-300 font-mono whitespace-pre-wrap leading-relaxed">{{ currentSourceDoc.content }}</pre>
+                  </div>
+                </div>
+
+                <!-- AI Outline (right pane) -->
+                <div class="w-1/2 flex flex-col h-full overflow-hidden">
+                  <div class="p-3 border-b border-white/5 bg-[#0a0c10]/50 text-xs font-semibold text-[#828b9a]">
+                    AI 整理大綱
+                  </div>
+                  <div class="flex-1 p-4 overflow-y-auto bg-[#0a0c10]/20 prose max-w-none text-slate-300">
+                    <MarkdownViewer :content="currentSourceDoc.summary" />
+                  </div>
+                </div>
+              </template>
+              <div v-else class="flex-1 flex items-center justify-center text-xs text-[#828b9a]">
+                請從左側選擇一個原始文件
+              </div>
             </div>
           </div>
         </div>

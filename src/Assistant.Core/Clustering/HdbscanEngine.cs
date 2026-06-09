@@ -6,7 +6,7 @@ public sealed class HdbscanEngine(IConfigService? configService = null) : IHdbsc
 {
     private readonly IConfigService? _configService = configService;
     private const float DefaultEps = 0.25f; // Loosened from 0.18f to 0.25f to be more inclusive by default
-    private const int DefaultMinPts = 2;
+    private const int DefaultMinPts = 1;
 
     public async Task<int[]> ClusterAsync(IReadOnlyList<float[]> vectors, CancellationToken ct = default)
     {

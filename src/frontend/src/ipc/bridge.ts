@@ -1,3 +1,10 @@
+export interface AssociatedDoc {
+  documentId: string
+  content: string
+  source: string
+  summary: string
+}
+
 interface IpcRequest {
   command: string
   requestId: string
@@ -170,6 +177,14 @@ function getMockData(command: string, payload: unknown): unknown {
         content: '# Sample entry\n\nThis is mock content.',
         version: 1,
         updatedAt: new Date().toISOString(),
+        associatedDocs: [
+          {
+            documentId: 'd1111111-1111-1111-1111-111111111111',
+            content: 'This is mock raw document content.',
+            source: 'document1.md',
+            summary: 'Summary of document 1 outline.'
+          }
+        ]
       }
     case 'entry.update':
       return {
@@ -248,7 +263,14 @@ export const ipc = {
 
   entry: {
     get: (entryId: string) =>
-      invoke<{ entryId: string; title: string; content: string; version: number; updatedAt: string }>('entry.get', { entryId }),
+      invoke<{
+        entryId: string
+        title: string
+        content: string
+        version: number
+        updatedAt: string
+        associatedDocs?: AssociatedDoc[]
+      }>('entry.get', { entryId }),
     update: (entryId: string, title: string, content: string) =>
       invoke<{ entryId: string; title: string; content: string; version: number; updatedAt: string }>('entry.update', { entryId, title, content }),
     rollback: (entryId: string, version: number) =>

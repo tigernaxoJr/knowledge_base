@@ -94,7 +94,28 @@ public sealed class SqliteRepository : IRelationalRepository
             using var alterCmd = new SqliteCommand("ALTER TABLE knowledge_entries ADD COLUMN cluster_id TEXT;", connection);
             alterCmd.ExecuteNonQuery();
         }
+
+        var hasEntryId = false;
+        using (var checkCmd = new SqliteCommand("PRAGMA table_info(raw_documents);", connection))
+        using (var reader = checkCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var columnName = reader["name"]?.ToString();
+                if (columnName == "entry_id")
+                {
+                    hasEntryId = true;
+                    break;
+                }
+            }
+        }
+        if (!hasEntryId)
+        {
+            using var alterCmd = new SqliteCommand("ALTER TABLE raw_documents ADD COLUMN entry_id TEXT;", connection);
+            alterCmd.ExecuteNonQuery();
+        }
     }
+
 
     public async Task InsertDocumentAsync(
         Guid documentId, string content, string source,
@@ -671,4 +692,55 @@ public sealed class SqliteRepository : IRelationalRepository
             UpdatedAt = DateTimeOffset.Parse(reader.GetString(7), CultureInfo.InvariantCulture),
         };
     }
+
+    public async Task UpdateDocumentEntryIdAsync(
+        Guid documentId, Guid? entryId, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            UPDATE raw_documents
+            SET entry_id = $entryId
+            WHERE document_id = $documentId;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        command.Parameters.AddWithValue("$documentId", documentId.ToString());
+        command.Parameters.AddWithValue("$entryId", entryId?.ToString() ?? (object)DBNull.Value);
+
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<(Guid DocumentId, string Content, string Source, string Summary)>> GetAssociatedDocumentsAsync(
+        Guid entryId, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            SELECT r.document_id, r.content, r.source, IFNULL(o.summary, '')
+            FROM raw_documents r
+            LEFT JOIN document_outlines o ON r.document_id = o.document_id
+            WHERE r.entry_id = $entryId;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        command.Parameters.AddWithValue("$entryId", entryId.ToString());
+
+        var list = new List<(Guid, string, string, string)>();
+        using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var docId = Guid.Parse(reader.GetString(0));
+            var content = reader.GetString(1);
+            var source = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+            var summary = reader.GetString(3);
+
+            list.Add((docId, content, source, summary));
+        }
+
+        return list;
+    }
 }
+

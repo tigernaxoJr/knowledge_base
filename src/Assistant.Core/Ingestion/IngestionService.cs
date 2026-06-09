@@ -57,14 +57,18 @@ public sealed class IngestionService(
             var searchResults = await _vectorSearchEngine.SearchKnowledgeEntriesAsync(outlineVector, topK: 5, ct);
             var decision = _routingDecision.Decide(searchResults);
 
+            KnowledgeEntry entry;
             if (decision.Action == RoutingAction.Merge && decision.BestMatch != null)
             {
-                await _knowledgeEntryService.MergeAsync(decision.BestMatch.EntryId, document.Content, ct: ct);
+                entry = await _knowledgeEntryService.MergeAsync(decision.BestMatch.EntryId, document.Content, ct: ct);
             }
             else
             {
-                await _knowledgeEntryService.CreateAsync(outlineResult.Title, document.Content, ct: ct);
+                entry = await _knowledgeEntryService.CreateAsync(outlineResult.Title, document.Content, ct: ct);
             }
+
+            await _relationalRepository.UpdateDocumentEntryIdAsync(document.DocumentId, entry.EntryId, ct);
+
 
             await _relationalRepository.CompleteOperationAsync(operationId, ct);
         }
@@ -153,19 +157,24 @@ public sealed class IngestionService(
                         var title = docTitles[currentItem.Doc.DocumentId];
                         lock (clusterActions)
                         {
-                            clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
-                                title, currentItem.Doc.Content, triggerRecluster: false, ct: ct));
+                            clusterActions.Add(async () => {
+                                var entry = await _knowledgeEntryService.CreateAsync(
+                                    title, currentItem.Doc.Content, triggerRecluster: false, ct: ct);
+                                await _relationalRepository.UpdateDocumentEntryIdAsync(
+                                    currentItem.Doc.DocumentId, entry.EntryId, ct);
+                            });
                         }
                     }
                 }
                 else
                 {
+                    var currentGroupItems = groupItems.ToList();
                     var mergedContentBuilder = new StringBuilder();
                     var combinedSummariesBuilder = new StringBuilder();
 
-                    for (int i = 0; i < groupItems.Count; i++)
+                    for (int i = 0; i < currentGroupItems.Count; i++)
                     {
-                        var item = groupItems[i];
+                        var item = currentGroupItems[i];
                         mergedContentBuilder.AppendLine($"--- Document {i + 1} ({item.Doc.Source}) ---");
                         mergedContentBuilder.AppendLine(item.Doc.Content);
                         mergedContentBuilder.AppendLine();
@@ -192,8 +201,15 @@ public sealed class IngestionService(
 
                         lock (clusterActions)
                         {
-                            clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
-                                title, article, triggerRecluster: false, ct: ct));
+                            clusterActions.Add(async () => {
+                                var entry = await _knowledgeEntryService.CreateAsync(
+                                    title, article, triggerRecluster: false, ct: ct);
+                                foreach (var item in currentGroupItems)
+                                {
+                                    await _relationalRepository.UpdateDocumentEntryIdAsync(
+                                        item.Doc.DocumentId, entry.EntryId, ct);
+                                }
+                            });
                         }
                     }, ct);
                     llmTasks.Add(llmTask);

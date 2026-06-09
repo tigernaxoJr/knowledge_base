@@ -88,4 +88,11 @@ public interface IRelationalRepository
 
     Task<IReadOnlyList<OperationStatus>> GetRecentOperationStatusesAsync(
         OperationKind? kind = null, int limit = 20, CancellationToken ct = default);
+
+    Task UpdateDocumentEntryIdAsync(
+        Guid documentId, Guid? entryId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<(Guid DocumentId, string Content, string Source, string Summary)>> GetAssociatedDocumentsAsync(
+        Guid entryId, CancellationToken ct = default);
 }
+

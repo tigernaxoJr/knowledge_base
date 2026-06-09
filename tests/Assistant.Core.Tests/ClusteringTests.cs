@@ -1,14 +1,34 @@
 using Assistant.Core.Clustering;
+using Assistant.Core.Config;
 using Xunit;
 
 namespace Assistant.Core.Tests;
 
 public class ClusteringTests
 {
+    private class MockConfigService(int minPts) : IConfigService
+    {
+        public Task<AppSettings> LoadAsync(CancellationToken ct = default)
+        {
+            return Task.FromResult(new AppSettings
+            {
+                ClusteringConfig = new ClusteringConfig { MinPts = minPts, Eps = 0.25 }
+            });
+        }
+
+        public Task SaveAsync(AppSettings settings, CancellationToken ct = default) => Task.CompletedTask;
+
+        public Task<(bool Success, string? ErrorMessage)> TestConnectionAsync(
+            string endpoint, string apiKey, string modelName, CancellationToken ct = default)
+        {
+            return Task.FromResult<(bool, string?)>((true, null));
+        }
+    }
+
     [Fact]
     public async Task ClusterAsync_ShouldGroupSimilarVectorsAndIdentifyNoise()
     {
-        var engine = new HdbscanEngine();
+        var engine = new HdbscanEngine(new MockConfigService(2));
 
         // High dimensional simulated embeddings (normalized 3D vectors)
         var vectors = new List<float[]>
@@ -44,7 +64,7 @@ public class ClusteringTests
     [Fact]
     public async Task IncrementalClusterAsync_ShouldReturnClusterIndices()
     {
-        var engine = new HdbscanEngine();
+        var engine = new HdbscanEngine(new MockConfigService(2));
 
         var newVectors = new List<float[]>
         {

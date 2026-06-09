@@ -113,6 +113,8 @@ internal sealed record TestConfigResult(
 [JsonSerializable(typeof(TestConfigPayload))]
 [JsonSerializable(typeof(TestConfigResult))]
 [JsonSerializable(typeof(AppSettings))]
+[JsonSerializable(typeof(AssociatedDocDto))]
+[JsonSerializable(typeof(List<AssociatedDocDto>))]
 [JsonSerializable(typeof(KnowledgeEntry))]
 [JsonSerializable(typeof(List<SearchResult>))]
 [JsonSerializable(typeof(List<KnowledgeVersion>))]

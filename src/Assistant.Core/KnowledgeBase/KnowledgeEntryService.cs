@@ -117,13 +117,23 @@ public sealed class KnowledgeEntryService(
             return null;
         }
 
+        var associatedDocs = await _repository.GetAssociatedDocumentsAsync(entryId, ct);
+        var docDtos = associatedDocs.Select(doc => new AssociatedDocDto
+        {
+            DocumentId = doc.DocumentId,
+            Content = doc.Content,
+            Source = doc.Source,
+            Summary = doc.Summary
+        }).ToList();
+
         return new KnowledgeEntry
         {
             EntryId = entryData.Value.EntryId,
             Title = entryData.Value.Title,
             Content = entryData.Value.Content,
             Version = entryData.Value.Version,
-            UpdatedAt = entryData.Value.UpdatedAt
+            UpdatedAt = entryData.Value.UpdatedAt,
+            AssociatedDocs = docDtos
         };
     }
 

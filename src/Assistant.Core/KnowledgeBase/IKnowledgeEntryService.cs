@@ -1,5 +1,14 @@
 namespace Assistant.Core.KnowledgeBase;
 
+/// <summary>關聯的原始文件 DTO</summary>
+public sealed class AssociatedDocDto
+{
+    public required Guid DocumentId { get; init; }
+    public required string Content { get; init; }
+    public required string Source { get; init; }
+    public required string Summary { get; init; }
+}
+
 /// <summary>知識條目資料模型</summary>
 public sealed class KnowledgeEntry
 {
@@ -8,7 +17,9 @@ public sealed class KnowledgeEntry
     public required string Content { get; set; }
     public int Version { get; set; } = 1;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public IReadOnlyList<AssociatedDocDto> AssociatedDocs { get; set; } = Array.Empty<AssociatedDocDto>();
 }
+
 
 /// <summary>知識條目 CRUD 與版本控制服務介面</summary>
 public interface IKnowledgeEntryService

@@ -22,7 +22,7 @@ public sealed class EmbeddingConfig
 public sealed class ClusteringConfig
 {
     public double Eps { get; set; } = 0.25;
-    public int MinPts { get; set; } = 2;
+    public int MinPts { get; set; } = 1;
 }
 
 /// <summary>應用程式設定根物件</summary>
