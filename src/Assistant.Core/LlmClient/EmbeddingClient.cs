@@ -31,6 +31,15 @@ public sealed class EmbeddingClient(HttpClient httpClient, Func<CancellationToke
             throw new InvalidOperationException("向量模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置向量模型端點與 API 金鑰！");
         }
         var requestUrl = endpoint.TrimEnd('/') + "/embeddings";
+        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
+        {
+            Kind = "embedding",
+            Operation = texts.Count == 1 ? "embeddings.single" : "embeddings.batch",
+            Endpoint = SafeEndpoint(requestUrl),
+            Model = config.ModelName,
+            InputCount = texts.Count,
+            InputChars = texts.Sum(t => t.Length)
+        });
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
         if (!string.IsNullOrEmpty(config.ApiKey))
@@ -54,29 +63,48 @@ public sealed class EmbeddingClient(HttpClient httpClient, Func<CancellationToke
         var json = JsonSerializer.Serialize(requestBody, ApiJsonContext.Default.EmbeddingRequest);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var errBody = await response.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"Embedding calculation failed with status {response.StatusCode}: {errBody}");
+            var response = await _httpClient.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errBody = await response.Content.ReadAsStringAsync(ct);
+                throw new HttpRequestException($"Embedding calculation failed with status {response.StatusCode}: {errBody}");
+            }
+
+            var responseJson = await response.Content.ReadAsStringAsync(ct);
+            var embeddingResponse = JsonSerializer.Deserialize(responseJson, ApiJsonContext.Default.EmbeddingResponse);
+
+            if (embeddingResponse?.Data == null || embeddingResponse.Data.Count == 0)
+            {
+                throw new InvalidOperationException("Received empty data from Embedding API response.");
+            }
+
+            // Sort data by index to guarantee ordering is matching input.
+            var sortedData = embeddingResponse.Data.OrderBy(d => d.Index).ToList();
+            var result = new List<float[]>(sortedData.Count);
+            foreach (var item in sortedData)
+            {
+                result.Add(item.Embedding);
+            }
+
+            debugCall.Succeed($"{result.Count} vector(s)", result.Sum(v => v.Length));
+            return result;
+        }
+        catch (Exception ex)
+        {
+            debugCall.Fail(ex);
+            throw;
+        }
+    }
+
+    private static string SafeEndpoint(string requestUrl)
+    {
+        if (!Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri))
+        {
+            return requestUrl;
         }
 
-        var responseJson = await response.Content.ReadAsStringAsync(ct);
-        var embeddingResponse = JsonSerializer.Deserialize(responseJson, ApiJsonContext.Default.EmbeddingResponse);
-
-        if (embeddingResponse?.Data == null || embeddingResponse.Data.Count == 0)
-        {
-            throw new InvalidOperationException("Received empty data from Embedding API response.");
-        }
-
-        // Sort data by index to guarantee ordering is matching input
-        var sortedData = embeddingResponse.Data.OrderBy(d => d.Index).ToList();
-        var result = new List<float[]>(sortedData.Count);
-        foreach (var item in sortedData)
-        {
-            result.Add(item.Embedding);
-        }
-
-        return result;
+        return $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}";
     }
 }

@@ -60,6 +60,7 @@ internal sealed class WebViewHost(IpcBridge ipcBridge, ResourceLoader resourceLo
 
         // ── 2. 設定 IPC：接收前端 postMessage ──
         core.WebMessageReceived += OnWebMessageReceived;
+        _ipcBridge.OutboundMessage += OnOutboundMessage;
 
         // ── 3. 導向前端入口 ──
 #if DEBUG
@@ -98,8 +99,22 @@ internal sealed class WebViewHost(IpcBridge ipcBridge, ResourceLoader resourceLo
         _webView?.CoreWebView2.PostWebMessageAsString(responseJson);
     }
 
+    private void OnOutboundMessage(string message)
+    {
+        if (_form is null || _webView?.CoreWebView2 is null) return;
+
+        if (_form.InvokeRequired)
+        {
+            _form.BeginInvoke(() => _webView?.CoreWebView2?.PostWebMessageAsString(message));
+            return;
+        }
+
+        _webView.CoreWebView2.PostWebMessageAsString(message);
+    }
+
     public void Dispose()
     {
+        _ipcBridge.OutboundMessage -= OnOutboundMessage;
         _webView?.Dispose();
         _form?.Dispose();
     }

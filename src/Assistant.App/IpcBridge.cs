@@ -28,7 +28,28 @@ internal sealed record IpcResponse<T>(
 
 internal sealed record IngestPayload(
     [property: JsonPropertyName("content")] string Content = "",
+    [property: JsonPropertyName("source")] string Source = "",
+    [property: JsonPropertyName("debug")] bool Debug = false
+);
+
+internal sealed record IngestBatchItem(
+    [property: JsonPropertyName("content")] string Content = "",
     [property: JsonPropertyName("source")] string Source = ""
+);
+
+internal sealed record IngestBatchPayload(
+    [property: JsonPropertyName("items")] List<IngestBatchItem> Items = default!,
+    [property: JsonPropertyName("debug")] bool Debug = false
+);
+
+internal sealed record IngestDebugResult(
+    [property: JsonPropertyName("events")] List<LlmDebugEvent> Events
+);
+
+internal sealed record IpcDebugEventMessage(
+    [property: JsonPropertyName("command")] string Command,
+    [property: JsonPropertyName("requestId")] string RequestId,
+    [property: JsonPropertyName("event")] LlmDebugEvent Event
 );
 
 internal sealed record EntryGetPayload(
@@ -75,7 +96,15 @@ internal sealed record TestConfigResult(
 [JsonSerializable(typeof(IpcResponse<List<ClusterDetailDto>>))]
 [JsonSerializable(typeof(IpcResponse<AppSettings>))]
 [JsonSerializable(typeof(IpcResponse<TestConfigResult>))]
+[JsonSerializable(typeof(IpcResponse<IngestDebugResult>))]
+[JsonSerializable(typeof(IngestDebugResult))]
+[JsonSerializable(typeof(IpcDebugEventMessage))]
+[JsonSerializable(typeof(LlmDebugEvent))]
+[JsonSerializable(typeof(List<LlmDebugEvent>))]
 [JsonSerializable(typeof(IngestPayload))]
+[JsonSerializable(typeof(IngestBatchPayload))]
+[JsonSerializable(typeof(IngestBatchItem))]
+[JsonSerializable(typeof(List<IngestBatchItem>))]
 [JsonSerializable(typeof(EntryGetPayload))]
 [JsonSerializable(typeof(RollbackPayload))]
 [JsonSerializable(typeof(EntryUpdatePayload))]
@@ -114,6 +143,8 @@ internal sealed class IpcBridge(
     private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
     private readonly IClusterService _clusterService = clusterService;
 
+    public event Action<string>? OutboundMessage;
+
     /// <summary>處理單一 IPC 請求，回傳序列化後的 JSON 回應字串</summary>
     public async Task<string> HandleAsync(string requestJson)
     {
@@ -138,6 +169,7 @@ internal sealed class IpcBridge(
     {
         // ── 文件導入 ──────────────────────────────────────────────────────
         "ingest" => HandleIngestAsync(request),
+        "ingest.batch" => HandleIngestBatchAsync(request),
 
         // ── 知識檢索與查詢 ──────────────────────────────────────────────────
         "search" => HandleSearchAsync(request),
@@ -174,8 +206,45 @@ internal sealed class IpcBridge(
             Content = payload.Content,
             Source = payload.Source
         };
-        await _ingestion.IngestAsync(doc);
-        return null;
+        if (!payload.Debug)
+        {
+            await _ingestion.IngestAsync(doc);
+            return null;
+        }
+
+        var trace = new LlmDebugTrace(ev => EmitDebugEvent(req.RequestId, ev));
+        using (LlmDebugScope.Begin(trace))
+        {
+            await _ingestion.IngestAsync(doc);
+        }
+
+        return new IngestDebugResult(trace.Events.ToList());
+    }
+
+    private async Task<object?> HandleIngestBatchAsync(IpcRequest req)
+    {
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.IngestBatchPayload);
+        if (payload == null) throw new ArgumentException("Invalid IngestBatchPayload");
+
+        var docs = payload.Items.Select(item => new RawDocument
+        {
+            Content = item.Content,
+            Source = item.Source
+        }).ToList();
+
+        if (!payload.Debug)
+        {
+            await _ingestion.IngestBatchAsync(docs);
+            return null;
+        }
+
+        var trace = new LlmDebugTrace(ev => EmitDebugEvent(req.RequestId, ev));
+        using (LlmDebugScope.Begin(trace))
+        {
+            await _ingestion.IngestBatchAsync(docs);
+        }
+
+        return new IngestDebugResult(trace.Events.ToList());
     }
 
     private async Task<object?> HandleSearchAsync(IpcRequest req)
@@ -304,6 +373,11 @@ internal sealed class IpcBridge(
             var response = new IpcResponse<TestConfigResult> { RequestId = requestId, Success = true, Data = testResult };
             return JsonSerializer.Serialize(response, typeof(IpcResponse<TestConfigResult>), IpcJsonContext.Default);
         }
+        if (data is IngestDebugResult ingestDebugResult)
+        {
+            var response = new IpcResponse<IngestDebugResult> { RequestId = requestId, Success = true, Data = ingestDebugResult };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<IngestDebugResult>), IpcJsonContext.Default);
+        }
         if (data is List<ClusterDetailDto> clusters)
         {
             var response = new IpcResponse<List<ClusterDetailDto>> { RequestId = requestId, Success = true, Data = clusters };
@@ -318,4 +392,11 @@ internal sealed class IpcBridge(
             new IpcResponse<object> { RequestId = requestId, Success = false, Error = error },
             typeof(IpcResponse<object>),
             IpcJsonContext.Default);
+
+    private void EmitDebugEvent(string requestId, LlmDebugEvent ev)
+    {
+        var message = new IpcDebugEventMessage("ingest.debug.event", requestId, ev);
+        var json = JsonSerializer.Serialize(message, IpcJsonContext.Default.IpcDebugEventMessage);
+        OutboundMessage?.Invoke(json);
+    }
 }

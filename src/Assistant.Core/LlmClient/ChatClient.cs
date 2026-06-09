@@ -19,6 +19,16 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
             throw new InvalidOperationException("大模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置大模型端點與 API 金鑰！");
         }
         var requestUrl = endpoint.TrimEnd('/') + "/chat/completions";
+        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
+        {
+            Kind = "chat",
+            Operation = "chat.completions",
+            Endpoint = SafeEndpoint(requestUrl),
+            Model = config.ModelName,
+            SystemPromptChars = systemPrompt.Length,
+            UserMessageChars = userMessage.Length,
+            InputChars = systemPrompt.Length + userMessage.Length
+        });
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
         if (!string.IsNullOrEmpty(config.ApiKey))
@@ -39,23 +49,32 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
         var json = JsonSerializer.Serialize(requestBody, ApiJsonContext.Default.ChatCompletionRequest);
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.SendAsync(request, ct);
-        if (!response.IsSuccessStatusCode)
+        try
         {
-            var errBody = await response.Content.ReadAsStringAsync(ct);
-            throw new HttpRequestException($"LLM Chat Completion failed with status {response.StatusCode}: {errBody}");
+            var response = await _httpClient.SendAsync(request, ct);
+            if (!response.IsSuccessStatusCode)
+            {
+                var errBody = await response.Content.ReadAsStringAsync(ct);
+                throw new HttpRequestException($"LLM Chat Completion failed with status {response.StatusCode}: {errBody}");
+            }
+
+            var responseJson = await response.Content.ReadAsStringAsync(ct);
+            var chatResponse = JsonSerializer.Deserialize(responseJson, ApiJsonContext.Default.ChatCompletionResponse);
+
+            if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
+            {
+                throw new InvalidOperationException("Received empty choices from LLM API response.");
+            }
+
+            var content = StripThoughtBlocks(chatResponse.Choices[0].Message.Content);
+            debugCall.Succeed(Preview(content), content.Length);
+            return content;
         }
-
-        var responseJson = await response.Content.ReadAsStringAsync(ct);
-        var chatResponse = JsonSerializer.Deserialize(responseJson, ApiJsonContext.Default.ChatCompletionResponse);
-
-        if (chatResponse?.Choices == null || chatResponse.Choices.Count == 0)
+        catch (Exception ex)
         {
-            throw new InvalidOperationException("Received empty choices from LLM API response.");
+            debugCall.Fail(ex);
+            throw;
         }
-
-        var content = chatResponse.Choices[0].Message.Content;
-        return StripThoughtBlocks(content);
     }
 
     private static string StripThoughtBlocks(string content)
@@ -91,5 +110,21 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
         } while (replaced);
 
         return content.Trim();
+    }
+
+    private static string SafeEndpoint(string requestUrl)
+    {
+        if (!Uri.TryCreate(requestUrl, UriKind.Absolute, out var uri))
+        {
+            return requestUrl;
+        }
+
+        return $"{uri.Scheme}://{uri.Host}{uri.AbsolutePath}";
+    }
+
+    private static string Preview(string value)
+    {
+        value = value.Replace("\r", " ").Replace("\n", " ").Trim();
+        return value.Length <= 240 ? value : value[..240] + "...";
     }
 }
