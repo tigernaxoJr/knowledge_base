@@ -133,7 +133,7 @@ public class OperationStatusTests
 
     private sealed class ThrowingOutlineGenerator : IOutlineGenerator
     {
-        public Task<string> GenerateOutlineAsync(string documentContent, CancellationToken ct = default) =>
+        public Task<OutlineResult> GenerateOutlineAsync(string documentContent, CancellationToken ct = default) =>
             throw new InvalidOperationException("outline failure");
     }
 

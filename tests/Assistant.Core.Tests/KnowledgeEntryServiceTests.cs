@@ -115,5 +115,6 @@ public class KnowledgeEntryServiceTests
         public string KnowledgeEntryMerge => "";
         public string MultiDocumentMerge => "";
         public string MultiDocumentTitleGeneration => "";
+        public string MultiDocumentMergeAndTitle => "";
     }
 }

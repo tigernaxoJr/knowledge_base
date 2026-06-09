@@ -5,6 +5,7 @@ using Assistant.Core.Prompts;
 using Assistant.Core.Search;
 using Assistant.Core.Storage;
 using System.Text;
+using System.Text.Json;
 
 namespace Assistant.Core.Ingestion;
 
@@ -43,13 +44,13 @@ public sealed class IngestionService(
             await _relationalRepository.InsertDocumentAsync(
                 document.DocumentId, document.Content, document.Source, document.CreatedAt, ct);
 
-            var summary = await _outlineGenerator.GenerateOutlineAsync(document.Content, ct);
+            var outlineResult = await _outlineGenerator.GenerateOutlineAsync(document.Content, ct);
             var outlineId = Guid.NewGuid();
 
-            await _relationalRepository.InsertOutlineAsync(outlineId, document.DocumentId, summary, ct);
+            await _relationalRepository.InsertOutlineAsync(outlineId, document.DocumentId, outlineResult.Summary, ct);
 
             var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
-            var outlineVector = await embeddingClient.EmbedAsync(summary, ct);
+            var outlineVector = await embeddingClient.EmbedAsync(outlineResult.Summary, ct);
 
             await _lanceDbClient.UpsertOutlineVectorAsync(outlineId, document.Source, outlineVector, ct);
 
@@ -62,11 +63,7 @@ public sealed class IngestionService(
             }
             else
             {
-                var chatClient = _llmClientFactory.CreateChatClient();
-                var generatedTitle = await chatClient.CompleteAsync(_prompts.TitleGeneration, summary, ct);
-                generatedTitle = generatedTitle.Trim('\"', '\'', ' ', '\r', '\n');
-
-                await _knowledgeEntryService.CreateAsync(generatedTitle, document.Content, ct: ct);
+                await _knowledgeEntryService.CreateAsync(outlineResult.Title, document.Content, ct: ct);
             }
 
             await _relationalRepository.CompleteOperationAsync(operationId, ct);
@@ -91,13 +88,14 @@ public sealed class IngestionService(
         {
             var outlines = new List<string>();
             var outlineIds = new List<Guid>();
+            var docTitles = new Dictionary<Guid, string>();
 
             // 1. Concurrent outline generation
             var outlineTasks = docList.Select(async doc =>
             {
-                var summary = await _outlineGenerator.GenerateOutlineAsync(doc.Content, ct);
+                var res = await _outlineGenerator.GenerateOutlineAsync(doc.Content, ct);
                 var outlineId = Guid.NewGuid();
-                return (Doc: doc, Summary: summary, OutlineId: outlineId);
+                return (Doc: doc, Outline: res, OutlineId: outlineId);
             }).ToList();
 
             var outlineResults = await Task.WhenAll(outlineTasks);
@@ -108,10 +106,11 @@ public sealed class IngestionService(
                 await _relationalRepository.InsertDocumentAsync(
                     res.Doc.DocumentId, res.Doc.Content, res.Doc.Source, res.Doc.CreatedAt, ct);
 
-                await _relationalRepository.InsertOutlineAsync(res.OutlineId, res.Doc.DocumentId, res.Summary, ct);
+                await _relationalRepository.InsertOutlineAsync(res.OutlineId, res.Doc.DocumentId, res.Outline.Summary, ct);
 
-                outlines.Add(res.Summary);
+                outlines.Add(res.Outline.Summary);
                 outlineIds.Add(res.OutlineId);
+                docTitles[res.Doc.DocumentId] = res.Outline.Title;
             }
 
             var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
@@ -151,18 +150,12 @@ public sealed class IngestionService(
                     foreach (var item in groupItems)
                     {
                         var currentItem = item;
-                        var llmTask = Task.Run(async () =>
+                        var title = docTitles[currentItem.Doc.DocumentId];
+                        lock (clusterActions)
                         {
-                            var title = await chatClient.CompleteAsync(_prompts.TitleGeneration, currentItem.Summary, ct);
-                            title = title.Trim('\"', '\'', ' ', '\r', '\n');
-
-                            lock (clusterActions)
-                            {
-                                clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
-                                    title, currentItem.Doc.Content, triggerRecluster: false, ct: ct));
-                            }
-                        }, ct);
-                        llmTasks.Add(llmTask);
+                            clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
+                                title, currentItem.Doc.Content, triggerRecluster: false, ct: ct));
+                        }
                     }
                 }
                 else
@@ -183,20 +176,24 @@ public sealed class IngestionService(
                     var combinedSummaries = combinedSummariesBuilder.ToString();
                     var mergedContentRaw = mergedContentBuilder.ToString();
 
+                    var userMessageBuilder = new StringBuilder();
+                    userMessageBuilder.AppendLine("# Cluster Document Outlines");
+                    userMessageBuilder.Append(combinedSummaries);
+                    userMessageBuilder.AppendLine();
+                    userMessageBuilder.AppendLine("# Source Documents Content");
+                    userMessageBuilder.Append(mergedContentRaw);
+
+                    var userMessage = userMessageBuilder.ToString();
+
                     var llmTask = Task.Run(async () =>
                     {
-                        var titleTask = chatClient.CompleteAsync(_prompts.MultiDocumentTitleGeneration, combinedSummaries, ct);
-                        var mergeTask = chatClient.CompleteAsync(_prompts.MultiDocumentMerge, mergedContentRaw, ct);
-
-                        await Task.WhenAll(titleTask, mergeTask);
-
-                        var title = (await titleTask).Trim('\"', '\'', ' ', '\r', '\n');
-                        var mergedContent = await mergeTask;
+                        var response = await chatClient.CompleteAsync(_prompts.MultiDocumentMergeAndTitle, userMessage, ct);
+                        var (title, article) = ParseMergeResult(response);
 
                         lock (clusterActions)
                         {
                             clusterActions.Add(() => _knowledgeEntryService.CreateAsync(
-                                title, mergedContent, triggerRecluster: false, ct: ct));
+                                title, article, triggerRecluster: false, ct: ct));
                         }
                     }, ct);
                     llmTasks.Add(llmTask);
@@ -218,6 +215,48 @@ public sealed class IngestionService(
         {
             await _relationalRepository.FailOperationAsync(operationId, ex.Message, ct);
             throw;
+        }
+    }
+
+    private static (string Title, string Article) ParseMergeResult(string response)
+    {
+        if (string.IsNullOrWhiteSpace(response))
+        {
+            return ("主題群組", string.Empty);
+        }
+
+        var text = response.Trim();
+        if (text.StartsWith("```json", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text.Substring(7);
+        }
+        else if (text.StartsWith("```", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text.Substring(3);
+        }
+        if (text.EndsWith("```", StringComparison.OrdinalIgnoreCase))
+        {
+            text = text.Substring(0, text.Length - 3);
+        }
+        text = text.Trim();
+
+        try
+        {
+            using var doc = JsonDocument.Parse(text);
+            var root = doc.RootElement;
+            var title = root.GetProperty("title").GetString() ?? string.Empty;
+            var article = root.GetProperty("article").GetString() ?? string.Empty;
+            return (title.Trim(), article.Trim());
+        }
+        catch
+        {
+            var titleMatch = System.Text.RegularExpressions.Regex.Match(text, @"""title""\s*:\s*""([^""]+)""");
+            var articleMatch = System.Text.RegularExpressions.Regex.Match(text, @"""article""\s*:\s*""([\s\S]+?)""\s*[,}]");
+
+            var title = titleMatch.Success ? titleMatch.Groups[1].Value : "主題群組";
+            var article = articleMatch.Success ? articleMatch.Groups[1].Value : text;
+
+            return (title.Trim(), article.Trim());
         }
     }
 }
