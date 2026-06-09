@@ -15,6 +15,21 @@ const dragOver = ref(false)
 const debugEnabled = ref(true)
 const debugEvents = ref<LlmDebugEvent[]>([])
 const lastError = ref('')
+const expandedPayloads = ref<Record<string, boolean>>({})
+
+function togglePayload(id: string) {
+  expandedPayloads.value[id] = !expandedPayloads.value[id]
+}
+
+function formatJson(val?: string) {
+  if (!val) return ''
+  try {
+    const parsed = JSON.parse(val)
+    return JSON.stringify(parsed, null, 2)
+  } catch {
+    return val
+  }
+}
 
 const singleSteps = ['Read document', 'Generate outline', 'Create embedding', 'Route entry', 'Write knowledge entry', 'Done']
 const batchSteps = ['Read files', 'Generate outlines', 'Create batch embeddings', 'Cluster and merge', 'Recluster knowledge base', 'Done']
@@ -58,6 +73,7 @@ function beginRun() {
   lastError.value = ''
   ingestStep.value = 0
   debugEvents.value = []
+  expandedPayloads.value = {}
 
   return window.setInterval(() => {
     if (ingestStep.value < currentSteps.value.length - 2) {
@@ -322,7 +338,7 @@ function formatDuration(ms?: number): string {
             <h2 class="text-xs font-bold uppercase tracking-widest text-white">LLM Debug Trace</h2>
             <p class="mt-1 text-[10px] text-[#828b9a]">Chat and embedding calls for the current or last ingestion.</p>
           </div>
-          <button class="text-[10px] text-[#828b9a] hover:text-white" @click="debugEvents = []">Clear</button>
+          <button class="text-[10px] text-[#828b9a] hover:text-white" @click="debugEvents = []; expandedPayloads = {}">Clear</button>
         </div>
 
         <div class="mb-4 grid grid-cols-3 gap-2">
@@ -363,8 +379,18 @@ function formatDuration(ms?: number): string {
               <div class="col-span-2 truncate text-[#828b9a]">Endpoint <span class="font-mono text-slate-200">{{ event.endpoint ?? '-' }}</span></div>
             </div>
 
-            <p v-if="event.preview" class="mt-3 rounded bg-black/20 p-2 text-[10px] leading-relaxed text-slate-300">{{ event.preview }}</p>
+             <p v-if="event.preview" class="mt-3 rounded bg-black/20 p-2 text-[10px] leading-relaxed text-slate-300">{{ event.preview }}</p>
             <p v-if="event.error" class="mt-3 rounded bg-rose-500/10 p-2 text-[10px] leading-relaxed text-rose-200">{{ event.error }}</p>
+            
+            <div v-if="event.requestPayload" class="mt-3">
+              <button 
+                @click="togglePayload(event.id)" 
+                class="text-[10px] font-semibold text-sky-400 hover:text-sky-300 transition-colors flex items-center gap-1 focus:outline-none"
+              >
+                <span>{{ expandedPayloads[event.id] ? 'Hide Payload' : 'Show Payload' }}</span>
+              </button>
+              <pre v-if="expandedPayloads[event.id]" class="mt-2 max-h-40 overflow-y-auto rounded bg-black/40 p-2 text-[10px] font-mono text-slate-300 whitespace-pre-wrap break-all border border-white/5">{{ formatJson(event.requestPayload) }}</pre>
+            </div>
           </div>
         </div>
       </aside>

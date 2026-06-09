@@ -34,6 +34,7 @@ export interface LlmDebugEvent {
   responseChars?: number
   preview?: string
   error?: string
+  requestPayload?: string
 }
 
 export interface IngestDebugResult {
@@ -100,6 +101,7 @@ function mockDebugEvents(command: string): IngestDebugResult {
     userMessageChars: event.userMessageChars,
     responseChars: event.responseChars,
     preview: event.preview,
+    requestPayload: event.requestPayload,
   })
 
   const events = [
@@ -110,6 +112,13 @@ function mockDebugEvents(command: string): IngestDebugResult {
       userMessageChars: 1600,
       responseChars: 210,
       preview: 'Mock outline result for debugging.',
+      requestPayload: JSON.stringify({
+        model: 'debug-chat',
+        messages: [
+          { role: 'system', content: 'You are an outline generator...' },
+          { role: 'user', content: 'Document text content...' }
+        ]
+      }, null, 2)
     }),
     completed(950, 760, {
       kind: 'embedding',
@@ -119,6 +128,10 @@ function mockDebugEvents(command: string): IngestDebugResult {
       responseChars: 6144,
       preview: command === 'ingest.batch' ? '4 vector(s)' : '1 vector(s)',
       endpoint: 'https://example.local/embeddings',
+      requestPayload: JSON.stringify({
+        model: 'debug-embedding',
+        input: command === 'ingest.batch' ? ['Outline 1', 'Outline 2', 'Outline 3', 'Outline 4'] : ['Outline 1']
+      }, null, 2)
     }),
     completed(1740, 1250, {
       kind: 'chat',
@@ -127,6 +140,13 @@ function mockDebugEvents(command: string): IngestDebugResult {
       userMessageChars: 900,
       responseChars: 48,
       preview: 'Mock generated knowledge title.',
+      requestPayload: JSON.stringify({
+        model: 'debug-chat',
+        messages: [
+          { role: 'system', content: 'You are a knowledge merger...' },
+          { role: 'user', content: 'Merged details...' }
+        ]
+      }, null, 2)
     }),
   ]
 

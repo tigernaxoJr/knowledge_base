@@ -31,21 +31,6 @@ public sealed class EmbeddingClient(HttpClient httpClient, Func<CancellationToke
             throw new InvalidOperationException("向量模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置向量模型端點與 API 金鑰！");
         }
         var requestUrl = endpoint.TrimEnd('/') + "/embeddings";
-        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
-        {
-            Kind = "embedding",
-            Operation = texts.Count == 1 ? "embeddings.single" : "embeddings.batch",
-            Endpoint = SafeEndpoint(requestUrl),
-            Model = config.ModelName,
-            InputCount = texts.Count,
-            InputChars = texts.Sum(t => t.Length)
-        });
-        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
-
-        if (!string.IsNullOrEmpty(config.ApiKey))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
-        }
 
         // 避免本地或部分輕量向量模型伺服器的 512-token 實體批次大小限制（如 Ollama/llama.cpp 的預設限制）。
         // 中文字元經 Tokenizer 分詞後常為 1.5 ~ 2 tokens，因此將字數截斷至 300 字內（約 450 tokens 內）以保障穩定性，
@@ -61,6 +46,24 @@ public sealed class EmbeddingClient(HttpClient httpClient, Func<CancellationToke
         };
 
         var json = JsonSerializer.Serialize(requestBody, ApiJsonContext.Default.EmbeddingRequest);
+
+        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
+        {
+            Kind = "embedding",
+            Operation = texts.Count == 1 ? "embeddings.single" : "embeddings.batch",
+            Endpoint = SafeEndpoint(requestUrl),
+            Model = config.ModelName,
+            InputCount = texts.Count,
+            InputChars = texts.Sum(t => t.Length),
+            RequestPayload = json
+        });
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+
+        if (!string.IsNullOrEmpty(config.ApiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
+        }
+
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
         try

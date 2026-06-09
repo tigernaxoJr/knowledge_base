@@ -21,6 +21,7 @@ public sealed record LlmDebugEvent
     public int? ResponseChars { get; init; }
     public string? Preview { get; init; }
     public string? Error { get; init; }
+    public string? RequestPayload { get; init; }
 }
 
 public sealed class LlmDebugTrace

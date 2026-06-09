@@ -19,23 +19,6 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
             throw new InvalidOperationException("大模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置大模型端點與 API 金鑰！");
         }
         var requestUrl = endpoint.TrimEnd('/') + "/chat/completions";
-        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
-        {
-            Kind = "chat",
-            Operation = "chat.completions",
-            Endpoint = SafeEndpoint(requestUrl),
-            Model = config.ModelName,
-            SystemPromptChars = systemPrompt.Length,
-            UserMessageChars = userMessage.Length,
-            InputChars = systemPrompt.Length + userMessage.Length
-        });
-        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
-
-        if (!string.IsNullOrEmpty(config.ApiKey))
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
-        }
-
         var requestBody = new ChatCompletionRequest
         {
             Model = config.ModelName,
@@ -47,6 +30,25 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
         };
 
         var json = JsonSerializer.Serialize(requestBody, ApiJsonContext.Default.ChatCompletionRequest);
+
+        using var debugCall = LlmDebugCall.Start(new LlmDebugEvent
+        {
+            Kind = "chat",
+            Operation = "chat.completions",
+            Endpoint = SafeEndpoint(requestUrl),
+            Model = config.ModelName,
+            SystemPromptChars = systemPrompt.Length,
+            UserMessageChars = userMessage.Length,
+            InputChars = systemPrompt.Length + userMessage.Length,
+            RequestPayload = json
+        });
+        using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
+
+        if (!string.IsNullOrEmpty(config.ApiKey))
+        {
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
+        }
+
         request.Content = new StringContent(json, Encoding.UTF8, "application/json");
 
         try
