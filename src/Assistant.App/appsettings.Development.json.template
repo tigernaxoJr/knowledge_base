@@ -1,0 +1,12 @@
+{
+  "LlmConfig": {
+    "Endpoint": "http://localhost:11434/v1",
+    "ApiKey": "",
+    "ModelName": "llama3"
+  },
+  "EmbeddingConfig": {
+    "Endpoint": "http://localhost:11434/v1",
+    "ApiKey": "",
+    "ModelName": "nomic-embed-text"
+  }
+}

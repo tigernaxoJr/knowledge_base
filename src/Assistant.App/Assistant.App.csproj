@@ -37,6 +37,19 @@
     <ProjectReference Include="..\Assistant.Core\Assistant.Core.csproj" />
   </ItemGroup>
 
+  <!-- ── 設定檔 ─────────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Development.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.Development.json.template">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
   <!--
     ── MSBuild Target 1：在 Build / Publish 前執行前端 Build ──────────────
     條件：dist/ 目錄不存在，或強制重建（環境變數 FORCE_FRONTEND_BUILD=1）

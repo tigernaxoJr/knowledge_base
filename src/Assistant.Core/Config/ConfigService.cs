@@ -20,36 +20,63 @@ public sealed class ConfigService : IConfigService
 
     public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
     {
-        if (!File.Exists(_configFilePath))
+        var settings = new AppSettings();
+
+        // 1. 讀取主設定檔 (appsettings.json)
+        if (File.Exists(_configFilePath))
         {
-            return new AppSettings();
+            try
+            {
+                var json = await File.ReadAllTextAsync(_configFilePath, Encoding.UTF8, ct);
+                var loaded = JsonSerializer.Deserialize(json, AppSettingsJsonContext.Default.AppSettings);
+                if (loaded != null)
+                {
+                    settings = loaded;
+                }
+            }
+            catch { }
         }
 
-        try
+        // 2. 讀取 Development 設定檔 (appsettings.Development.json)，優先級較高
+        var dir = Path.GetDirectoryName(_configFilePath);
+        var devFilePath = Path.Combine(dir ?? string.Empty, "appsettings.Development.json");
+        if (File.Exists(devFilePath))
         {
-            var json = await File.ReadAllTextAsync(_configFilePath, Encoding.UTF8, ct);
-            var settings = JsonSerializer.Deserialize(json, AppSettingsJsonContext.Default.AppSettings);
-            if (settings == null)
+            try
             {
-                return new AppSettings();
+                var devJson = await File.ReadAllTextAsync(devFilePath, Encoding.UTF8, ct);
+                var devSettings = JsonSerializer.Deserialize(devJson, AppSettingsJsonContext.Default.AppSettings);
+                if (devSettings != null)
+                {
+                    // 合併設定
+                    if (devSettings.LlmConfig != null)
+                    {
+                        if (!string.IsNullOrEmpty(devSettings.LlmConfig.Endpoint)) settings.LlmConfig.Endpoint = devSettings.LlmConfig.Endpoint;
+                        if (!string.IsNullOrEmpty(devSettings.LlmConfig.ApiKey)) settings.LlmConfig.ApiKey = devSettings.LlmConfig.ApiKey;
+                        if (!string.IsNullOrEmpty(devSettings.LlmConfig.ModelName)) settings.LlmConfig.ModelName = devSettings.LlmConfig.ModelName;
+                    }
+                    if (devSettings.EmbeddingConfig != null)
+                    {
+                        if (!string.IsNullOrEmpty(devSettings.EmbeddingConfig.Endpoint)) settings.EmbeddingConfig.Endpoint = devSettings.EmbeddingConfig.Endpoint;
+                        if (!string.IsNullOrEmpty(devSettings.EmbeddingConfig.ApiKey)) settings.EmbeddingConfig.ApiKey = devSettings.EmbeddingConfig.ApiKey;
+                        if (!string.IsNullOrEmpty(devSettings.EmbeddingConfig.ModelName)) settings.EmbeddingConfig.ModelName = devSettings.EmbeddingConfig.ModelName;
+                    }
+                }
             }
-
-            // Decrypt ApiKeys
-            if (!string.IsNullOrEmpty(settings.LlmConfig.ApiKey))
-            {
-                settings.LlmConfig.ApiKey = DecryptString(settings.LlmConfig.ApiKey);
-            }
-            if (!string.IsNullOrEmpty(settings.EmbeddingConfig.ApiKey))
-            {
-                settings.EmbeddingConfig.ApiKey = DecryptString(settings.EmbeddingConfig.ApiKey);
-            }
-
-            return settings;
+            catch { }
         }
-        catch
+
+        // 3. 解密 ApiKeys (若為加密格式則解密，若非加密格式會自動 fallback 回傳明文)
+        if (!string.IsNullOrEmpty(settings.LlmConfig.ApiKey))
         {
-            return new AppSettings();
+            settings.LlmConfig.ApiKey = DecryptString(settings.LlmConfig.ApiKey);
         }
+        if (!string.IsNullOrEmpty(settings.EmbeddingConfig.ApiKey))
+        {
+            settings.EmbeddingConfig.ApiKey = DecryptString(settings.EmbeddingConfig.ApiKey);
+        }
+
+        return settings;
     }
 
     public async Task SaveAsync(AppSettings settings, CancellationToken ct = default)
