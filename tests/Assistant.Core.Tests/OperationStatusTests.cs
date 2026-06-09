@@ -27,7 +27,8 @@ public class OperationStatusTests
                 new RoutingDecision(),
                 new StubKnowledgeEntryService(),
                 new StubHdbscanEngine(),
-                new DefaultPromptProvider());
+                new DefaultPromptProvider(),
+                new StubClusterService());
 
             await Assert.ThrowsAsync<InvalidOperationException>(() =>
                 service.IngestAsync(new RawDocument { Content = "source", Source = "unit-test.md" }));
@@ -59,7 +60,8 @@ public class OperationStatusTests
                 new VersionControlService(repository),
                 new StubLanceDbClient(),
                 new StubLlmClientFactory(),
-                new DefaultPromptProvider());
+                new DefaultPromptProvider(),
+                new StubClusterService());
 
             var entryId = Guid.NewGuid();
             await Assert.ThrowsAsync<KeyNotFoundException>(() =>
@@ -70,6 +72,55 @@ public class OperationStatusTests
             Assert.Equal(OperationState.Failed, status.State);
             Assert.Equal(entryId, status.SubjectId);
             Assert.Contains(entryId.ToString(), status.ErrorMessage);
+        }
+        finally
+        {
+            if (File.Exists(tempFile))
+            {
+                File.Delete(tempFile);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task UpdateAsync_ShouldArchiveOldVersionAndUpdateDatabaseAndLanceDb()
+    {
+        var tempFile = Path.GetTempFileName();
+        try
+        {
+            var repository = new SqliteRepository(tempFile);
+            var lanceDb = new StubLanceDbClient();
+            var service = new KnowledgeEntryService(
+                repository,
+                new VersionControlService(repository),
+                lanceDb,
+                new StubLlmClientFactory(),
+                new DefaultPromptProvider(),
+                new StubClusterService());
+
+            // 1. Create initial entry
+            var entryId = await repository.InsertEntryAsync("Original Title", "Original Content");
+
+            // 2. Perform update
+            var updated = await service.UpdateAsync(entryId, "Updated Title", "Updated Content");
+
+            // 3. Assert updated object
+            Assert.Equal("Updated Title", updated.Title);
+            Assert.Equal("Updated Content", updated.Content);
+            Assert.Equal(2, updated.Version);
+
+            // 4. Assert SQLite state
+            var dbEntry = await repository.GetEntryAsync(entryId);
+            Assert.NotNull(dbEntry);
+            Assert.Equal("Updated Title", dbEntry.Value.Title);
+            Assert.Equal("Updated Content", dbEntry.Value.Content);
+            Assert.Equal(2, dbEntry.Value.Version);
+
+            // 5. Assert version history
+            var history = await repository.GetVersionHistoryAsync(entryId);
+            var archived = Assert.Single(history);
+            Assert.Equal(1, archived.Version);
+            Assert.Equal("Original Content", archived.ContentSnapshot);
         }
         finally
         {
@@ -127,6 +178,9 @@ public class OperationStatusTests
 
         public Task DeleteEntryVectorAsync(Guid entryId, CancellationToken ct = default) =>
             Task.CompletedTask;
+
+        public Task<IReadOnlyList<(Guid EntryId, float[] Vector)>> GetAllEntryVectorsAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<(Guid EntryId, float[] Vector)>>([]);
     }
 
     private sealed class StubVectorSearchEngine : IVectorSearchEngine
@@ -138,17 +192,30 @@ public class OperationStatusTests
 
     private sealed class StubKnowledgeEntryService : IKnowledgeEntryService
     {
-        public Task<KnowledgeEntry> CreateAsync(string title, string content, CancellationToken ct = default) =>
+        public Task<KnowledgeEntry> CreateAsync(string title, string content, bool triggerRecluster = true, CancellationToken ct = default) =>
             Task.FromResult(new KnowledgeEntry { Title = title, Content = content });
 
-        public Task<KnowledgeEntry> MergeAsync(Guid entryId, string newDocumentContent, CancellationToken ct = default) =>
+        public Task<KnowledgeEntry> MergeAsync(Guid entryId, string newDocumentContent, bool triggerRecluster = true, CancellationToken ct = default) =>
             Task.FromResult(new KnowledgeEntry { EntryId = entryId, Title = "title", Content = newDocumentContent });
 
         public Task<KnowledgeEntry?> GetAsync(Guid entryId, CancellationToken ct = default) =>
             Task.FromResult<KnowledgeEntry?>(null);
 
-        public Task RollbackAsync(Guid entryId, int targetVersion, CancellationToken ct = default) =>
+        public Task RollbackAsync(Guid entryId, int targetVersion, bool triggerRecluster = true, CancellationToken ct = default) =>
             Task.CompletedTask;
+
+        public Task<KnowledgeEntry> UpdateAsync(Guid entryId, string title, string content, bool triggerRecluster = true, CancellationToken ct = default) =>
+            Task.FromResult(new KnowledgeEntry { EntryId = entryId, Title = title, Content = content });
+
+        public Task DeleteAsync(Guid entryId, bool triggerRecluster = true, CancellationToken ct = default) =>
+            Task.CompletedTask;
+    }
+
+    private sealed class StubClusterService : IClusterService
+    {
+        public Task ReclusterAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task<IReadOnlyList<ClusterDetailDto>> GetClustersAsync(CancellationToken ct = default) =>
+            Task.FromResult<IReadOnlyList<ClusterDetailDto>>([]);
     }
 
     private sealed class StubHdbscanEngine : IHdbscanEngine

@@ -1,54 +1,80 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref } from 'vue'
 import MarkdownViewer from '../components/MarkdownViewer.vue'
 import { ipc } from '../ipc/bridge'
 
-type SearchResult = { entryId: string; title: string; score: number }
+type ClusterEntry = { entryId: string; title: string; version: number; updatedAt: string }
+type Cluster = { clusterId: string; name: string; entries: ClusterEntry[] }
 type Entry = { entryId: string; title: string; content: string; version: number; updatedAt: string }
-type EntryVersion = { version: number; contentSnapshot: string; archivedAt: string }
 
-const searchQuery = ref('')
-const searchResults = ref<SearchResult[]>([])
+const clusters = ref<Cluster[]>([])
+const selectedClusterId = ref<string | null>(null)
+const selectedCluster = ref<Cluster | null>(null)
+
 const selectedEntryId = ref<string | null>(null)
 const selectedEntry = ref<Entry | null>(null)
-const selectedEntryHistory = ref<EntryVersion[]>([])
-const isSearching = ref(false)
-const showHistory = ref(false)
 
+const isLoading = ref(false)
+const isReclustering = ref(false)
+
+// Editing States
 const isEditing = ref(false)
 const editTitle = ref('')
 const editContent = ref('')
 const isSaving = ref(false)
 
 onMounted(() => {
-  void handleSearch()
+  void loadClusters()
 })
 
-watch(searchQuery, (_value, _oldValue, onCleanup) => {
-  const handler = window.setTimeout(() => {
-    void handleSearch()
-  }, 300)
-  onCleanup(() => window.clearTimeout(handler))
-})
-
-async function handleSearch() {
-  isSearching.value = true
+async function loadClusters(selectFirst = false) {
+  isLoading.value = true
   try {
-    searchResults.value = await ipc.search(searchQuery.value) || []
+    const data = await ipc.cluster.list()
+    clusters.value = data || []
+    
+    if (selectFirst && clusters.value.length > 0) {
+      selectCluster(clusters.value[0])
+    } else if (selectedClusterId.value) {
+      // Try to re-select currently selected cluster
+      const current = clusters.value.find(c => c.clusterId === selectedClusterId.value)
+      if (current) {
+        selectCluster(current)
+      }
+    }
   } catch (err) {
-    console.error('Search failed:', err)
+    console.error('Failed to load clusters:', err)
   } finally {
-    isSearching.value = false
+    isLoading.value = false
   }
+}
+
+async function triggerRecluster() {
+  isReclustering.value = true
+  try {
+    await ipc.cluster.recluster()
+    await loadClusters()
+    alert('知識分群已重新計算並儲存完成！')
+  } catch (err: any) {
+    alert(`重新分群失敗: ${err.message}`)
+  } finally {
+    isReclustering.value = false
+  }
+}
+
+function selectCluster(cluster: Cluster) {
+  selectedClusterId.value = cluster.clusterId
+  selectedCluster.value = cluster
+  selectedEntryId.value = null
+  selectedEntry.value = null
+  isEditing.value = false
 }
 
 async function selectEntry(entryId: string) {
   selectedEntryId.value = entryId
-  showHistory.value = false
   isEditing.value = false
   try {
     selectedEntry.value = await ipc.entry.get(entryId)
-    selectedEntryHistory.value = await ipc.entry.history(entryId) || []
   } catch (err) {
     console.error('Failed to load entry details:', err)
   }
@@ -83,23 +109,12 @@ async function handleSaveEdit() {
     await ipc.entry.update(selectedEntry.value.entryId, title, content)
     isEditing.value = false
     await selectEntry(selectedEntry.value.entryId)
-    await handleSearch()
+    // Reload cluster list to reflect title updates
+    await loadClusters()
   } catch (err: any) {
     alert(`儲存失敗: ${err.message}`)
   } finally {
     isSaving.value = false
-  }
-}
-
-async function handleRollback(version: number) {
-  if (!selectedEntry.value) return
-  if (!confirm(`確定要將此條目還原到版本 v${version} 嗎？此動作會建立新版本存檔。`)) return
-
-  try {
-    await ipc.entry.rollback(selectedEntry.value.entryId, version)
-    await selectEntry(selectedEntry.value.entryId)
-  } catch (err: any) {
-    alert(`還原失敗: ${err.message}`)
   }
 }
 
@@ -111,7 +126,7 @@ async function handleDeleteEntry() {
     await ipc.entry.delete(selectedEntry.value.entryId)
     selectedEntry.value = null
     selectedEntryId.value = null
-    await handleSearch()
+    await loadClusters()
   } catch (err: any) {
     alert(`刪除失敗: ${err.message}`)
   }
@@ -128,59 +143,93 @@ function formatTime(isoString: string): string {
 
 <template>
   <div class="h-full flex overflow-hidden">
-    <div class="w-[35%] border-r border-white/5 flex flex-col h-full bg-[#0a0c10] shrink-0">
-      <div class="p-4 border-b border-white/5">
-        <div class="relative">
-          <input
-            v-model="searchQuery"
-            type="text"
-            placeholder="輸入關鍵字或語意問題..."
-            class="w-full bg-[#121620] border border-white/5 rounded py-2 pl-9 pr-4 text-xs text-white placeholder-[#828b9a] focus:outline-none focus:border-sky-500 transition duration-150"
-          />
-          <span class="absolute left-3 top-3 text-[#828b9a]">
-            <svg v-if="!isSearching" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-            <svg v-else class="w-3.5 h-3.5 animate-spin text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
-            </svg>
-          </span>
-        </div>
+    <!-- 第一欄：主題分群清單 -->
+    <div class="w-1/4 border-r border-white/5 flex flex-col h-full bg-[#0a0c10] shrink-0">
+      <div class="p-4 border-b border-white/5 flex items-center justify-between">
+        <span class="text-xs font-semibold text-[#828b9a] uppercase tracking-wider">主題分群</span>
+        <button
+          @click="triggerRecluster"
+          :disabled="isReclustering"
+          class="bg-sky-500/10 hover:bg-sky-500/20 disabled:opacity-50 text-sky-400 border border-sky-500/20 rounded-md px-2 py-1 text-[10px] font-medium transition flex items-center gap-1.5"
+        >
+          <svg v-if="isReclustering" class="w-2.5 h-2.5 animate-spin text-sky-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+          </svg>
+          重新計算分群
+        </button>
       </div>
 
       <div class="flex-1 overflow-y-auto p-3 space-y-2">
-        <div v-if="searchResults.length === 0" class="text-center py-12 text-xs text-[#828b9a]">
-          尚無搜尋結果
+        <div v-if="isLoading && clusters.length === 0" class="text-center py-12 text-xs text-[#828b9a]">
+          載入分群中...
         </div>
+        <div v-else-if="clusters.length === 0" class="text-center py-12 text-xs text-[#828b9a]">
+          目前無任何分群
+        </div>
+        
         <button
-          v-for="item in searchResults"
-          :key="item.entryId"
-          @click="selectEntry(item.entryId)"
-          :class="['w-full text-left p-3.5 rounded border transition-all duration-150 group flex flex-col gap-2 relative overflow-hidden',
-            selectedEntryId === item.entryId
-              ? 'bg-white/[0.02] border-sky-500'
+          v-for="cluster in clusters"
+          :key="cluster.clusterId"
+          @click="selectCluster(cluster)"
+          :class="['w-full text-left p-3 rounded-lg border transition-all duration-150 relative overflow-hidden flex flex-col gap-1',
+            selectedClusterId === cluster.clusterId
+              ? 'bg-white/[0.02] border-sky-500/50 shadow-md shadow-sky-500/5'
               : 'bg-transparent border-transparent hover:bg-white/[0.015] hover:border-white/5']"
         >
-          <div class="absolute left-0 bottom-0 h-[1.5px] bg-sky-500 transition-all duration-300" :style="{ width: `${item.score * 100}%` }"></div>
-          <div class="flex justify-between items-start gap-2">
-            <span class="font-medium text-xs text-white group-hover:text-sky-400 transition-colors line-clamp-2">{{ item.title }}</span>
-            <span class="text-[10px] text-sky-400 font-mono shrink-0">{{ Math.round(item.score * 100) }}% Match</span>
+          <div v-if="cluster.clusterId === '00000000-0000-0000-0000-000000000000'" class="absolute right-0 top-0 text-[8px] bg-white/5 text-[#828b9a] px-1.5 py-0.5 rounded-bl">
+            噪音點
           </div>
-          <div class="text-[10px] text-[#828b9a] font-mono">ID: {{ item.entryId.substring(0, 8) }}</div>
+          <span class="font-medium text-xs text-white line-clamp-1 group-hover:text-sky-400 transition-colors">{{ cluster.name }}</span>
+          <span class="text-[10px] text-[#828b9a]">{{ cluster.entries.length }} 筆知識條目</span>
         </button>
       </div>
     </div>
 
+    <!-- 第二欄：分群下的知識條目清單 -->
+    <div class="w-1/4 border-r border-white/5 flex flex-col h-full bg-[#08090d] shrink-0">
+      <div class="p-4 border-b border-white/5">
+        <span class="text-xs font-semibold text-[#828b9a] uppercase tracking-wider">
+          {{ selectedCluster ? `【${selectedCluster.name}】的條目` : '條目清單' }}
+        </span>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-3 space-y-2">
+        <div v-if="!selectedCluster" class="text-center py-12 text-xs text-[#828b9a]">
+          請先從左側選擇一個主題分群
+        </div>
+        <div v-else-if="selectedCluster.entries.length === 0" class="text-center py-12 text-xs text-[#828b9a]">
+          此分群下無任何知識條目
+        </div>
+        
+        <button
+          v-for="entry in selectedCluster?.entries || []"
+          :key="entry.entryId"
+          @click="selectEntry(entry.entryId)"
+          :class="['w-full text-left p-3.5 rounded border transition-all duration-150 flex flex-col gap-2 relative overflow-hidden',
+            selectedEntryId === entry.entryId
+              ? 'bg-white/[0.02] border-sky-500'
+              : 'bg-transparent border-transparent hover:bg-white/[0.015] hover:border-white/5']"
+        >
+          <div class="flex justify-between items-start gap-2">
+            <span class="font-medium text-xs text-white group-hover:text-sky-400 transition-colors line-clamp-2">{{ entry.title }}</span>
+            <span class="text-[9px] text-[#828b9a] font-mono shrink-0">v{{ entry.version }}</span>
+          </div>
+          <div class="text-[9px] text-[#828b9a] font-mono">{{ formatTime(entry.updatedAt) }}</div>
+        </button>
+      </div>
+    </div>
+
+    <!-- 第三欄：知識條目詳細內容（整合編輯模式） -->
     <div class="flex-1 flex flex-col h-full bg-[#090b0f] overflow-hidden">
       <div v-if="!selectedEntry" class="flex-1 flex flex-col items-center justify-center text-center p-8">
         <div class="w-12 h-12 rounded bg-white/[0.015] border border-white/5 flex items-center justify-center text-[#828b9a] mb-4">
           <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
           </svg>
         </div>
         <h3 class="text-xs font-semibold text-white mb-1">選取一筆知識條目</h3>
-        <p class="text-[11px] text-[#828b9a] max-w-xs">從左側搜尋結果開啟內容與版本歷史。</p>
+        <p class="text-[11px] text-[#828b9a] max-w-xs">從中間清單選取條目以查看詳細內文與進行編輯。</p>
       </div>
 
       <div v-else class="flex-1 flex flex-col min-h-0">
@@ -234,12 +283,6 @@ function formatTime(isoString: string): string {
                 編輯條目
               </button>
               <button
-                @click="showHistory = !showHistory"
-                class="bg-white/[0.015] border border-white/5 hover:bg-white/[0.03] text-white rounded px-3 py-1.5 text-[11px] font-medium transition"
-              >
-                {{ showHistory ? '關閉版本' : '版本歷史' }}
-              </button>
-              <button
                 @click="handleDeleteEntry"
                 class="bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 text-red-400 rounded px-3 py-1.5 text-[11px] font-medium transition"
               >
@@ -261,24 +304,6 @@ function formatTime(isoString: string): string {
               <MarkdownViewer :content="selectedEntry.content" />
             </div>
           </div>
-
-          <aside v-if="showHistory" class="w-72 border-l border-white/5 bg-[#0a0c10] overflow-y-auto p-4 space-y-3">
-            <h3 class="text-[10px] text-[#828b9a] font-semibold tracking-widest uppercase">Version History</h3>
-            <div v-if="selectedEntryHistory.length === 0" class="text-[11px] text-[#828b9a]">尚無歷史版本</div>
-            <div v-for="version in selectedEntryHistory" :key="version.version" class="bg-[#11141a]/40 border border-white/5 rounded p-3 space-y-2">
-              <div class="flex justify-between items-center font-mono text-[10px]">
-                <span class="font-bold text-white">v{{ version.version }}</span>
-                <span class="text-[#828b9a]">{{ formatTime(version.archivedAt) }}</span>
-              </div>
-              <p class="text-[10px] text-[#828b9a] line-clamp-3 italic leading-relaxed">{{ version.contentSnapshot }}</p>
-              <button
-                @click="handleRollback(version.version)"
-                class="w-full text-center bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 border border-sky-500/20 rounded py-1 text-[11px] font-medium transition"
-              >
-                還原此版本
-              </button>
-            </div>
-          </aside>
         </div>
       </div>
     </div>

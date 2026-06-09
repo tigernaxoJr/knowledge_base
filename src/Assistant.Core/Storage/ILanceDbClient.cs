@@ -25,4 +25,7 @@ public interface ILanceDbClient
 
     /// <summary>刪除知識條目向量（條目刪除時同步清理）</summary>
     Task DeleteEntryVectorAsync(Guid entryId, CancellationToken ct = default);
+
+    /// <summary>取得所有知識條目的向量，以利全域聚類分群</summary>
+    Task<IReadOnlyList<(Guid EntryId, float[] Vector)>> GetAllEntryVectorsAsync(CancellationToken ct = default);
 }

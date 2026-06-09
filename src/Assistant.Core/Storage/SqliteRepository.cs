@@ -62,10 +62,38 @@ public sealed class SqliteRepository : IRelationalRepository
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS clusters (
+                cluster_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
         ";
 
-        using var command = new SqliteCommand(commandText, connection);
-        command.ExecuteNonQuery();
+        using (var command = new SqliteCommand(commandText, connection))
+        {
+            command.ExecuteNonQuery();
+        }
+
+        var hasClusterId = false;
+        using (var checkCmd = new SqliteCommand("PRAGMA table_info(knowledge_entries);", connection))
+        using (var reader = checkCmd.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                var columnName = reader["name"]?.ToString();
+                if (columnName == "cluster_id")
+                {
+                    hasClusterId = true;
+                    break;
+                }
+            }
+        }
+        if (!hasClusterId)
+        {
+            using var alterCmd = new SqliteCommand("ALTER TABLE knowledge_entries ADD COLUMN cluster_id TEXT;", connection);
+            alterCmd.ExecuteNonQuery();
+        }
     }
 
     public async Task InsertDocumentAsync(
@@ -134,7 +162,7 @@ public sealed class SqliteRepository : IRelationalRepository
     }
 
     public async Task UpdateEntryAsync(
-        Guid entryId, string content, int version,
+        Guid entryId, string title, string content, int version,
         DateTimeOffset updatedAt, CancellationToken ct = default)
     {
         using var connection = new SqliteConnection(_connectionString);
@@ -142,17 +170,48 @@ public sealed class SqliteRepository : IRelationalRepository
 
         var query = @"
             UPDATE knowledge_entries 
-            SET content = $content, version = $version, updated_at = $updatedAt
+            SET title = $title, content = $content, version = $version, updated_at = $updatedAt
             WHERE entry_id = $id;
         ";
 
         using var command = new SqliteCommand(query, connection);
         command.Parameters.AddWithValue("$id", entryId.ToString());
+        command.Parameters.AddWithValue("$title", title);
         command.Parameters.AddWithValue("$content", content);
         command.Parameters.AddWithValue("$version", version);
         command.Parameters.AddWithValue("$updatedAt", updatedAt.ToString("o", CultureInfo.InvariantCulture));
 
         await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task DeleteEntryAsync(Guid entryId, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            var deleteVersionsQuery = "DELETE FROM knowledge_versions WHERE entry_id = $id;";
+            using (var command = new SqliteCommand(deleteVersionsQuery, connection, transaction))
+            {
+                command.Parameters.AddWithValue("$id", entryId.ToString());
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            var deleteEntryQuery = "DELETE FROM knowledge_entries WHERE entry_id = $id;";
+            using (var command = new SqliteCommand(deleteEntryQuery, connection, transaction))
+            {
+                command.Parameters.AddWithValue("$id", entryId.ToString());
+                await command.ExecuteNonQueryAsync(ct);
+            }
+
+            await transaction.CommitAsync(ct);
+        }
+        catch
+        {
+            await transaction.RollbackAsync(ct);
+            throw;
+        }
     }
 
     public async Task<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)?> GetEntryAsync(
@@ -419,6 +478,181 @@ public sealed class SqliteRepository : IRelationalRepository
         command.Parameters.AddWithValue("$updatedAt", DateTimeOffset.UtcNow.ToString("o", CultureInfo.InvariantCulture));
 
         await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)>> GetAllEntriesAsync(CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            SELECT entry_id, title, content, version, updated_at
+            FROM knowledge_entries;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        var list = new List<(Guid, string, string, int, DateTimeOffset)>();
+        using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var id = Guid.Parse(reader.GetString(0));
+            var title = reader.GetString(1);
+            var content = reader.GetString(2);
+            var version = reader.GetInt32(3);
+            var updatedAt = DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture);
+
+            list.Add((id, title, content, version, updatedAt));
+        }
+
+        return list;
+    }
+
+    public async Task<IReadOnlyList<(Guid ClusterId, string Name, DateTimeOffset CreatedAt)>> GetClustersAsync(CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            SELECT cluster_id, name, created_at
+            FROM clusters;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        var list = new List<(Guid, string, DateTimeOffset)>();
+        using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var id = Guid.Parse(reader.GetString(0));
+            var name = reader.GetString(1);
+            var createdAt = DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture);
+
+            list.Add((id, name, createdAt));
+        }
+
+        return list;
+    }
+
+    public async Task ClearClustersAsync(CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            var queryUpdate = "UPDATE knowledge_entries SET cluster_id = NULL;";
+            using (var cmd = new SqliteCommand(queryUpdate, connection, transaction))
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            var queryDelete = "DELETE FROM clusters;";
+            using (var cmd = new SqliteCommand(queryDelete, connection, transaction))
+            {
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    public async Task InsertClusterAsync(Guid clusterId, string name, DateTimeOffset createdAt, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            INSERT INTO clusters (cluster_id, name, created_at)
+            VALUES ($clusterId, $name, $createdAt);
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        command.Parameters.AddWithValue("$clusterId", clusterId.ToString());
+        command.Parameters.AddWithValue("$name", name);
+        command.Parameters.AddWithValue("$createdAt", createdAt.ToString("o", CultureInfo.InvariantCulture));
+
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task DeleteClusterAsync(Guid clusterId, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        using var transaction = connection.BeginTransaction();
+        try
+        {
+            var queryUpdate = "UPDATE knowledge_entries SET cluster_id = NULL WHERE cluster_id = $clusterId;";
+            using (var cmd = new SqliteCommand(queryUpdate, connection, transaction))
+            {
+                cmd.Parameters.AddWithValue("$clusterId", clusterId.ToString());
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            var queryDelete = "DELETE FROM clusters WHERE cluster_id = $clusterId;";
+            using (var cmd = new SqliteCommand(queryDelete, connection, transaction))
+            {
+                cmd.Parameters.AddWithValue("$clusterId", clusterId.ToString());
+                await cmd.ExecuteNonQueryAsync(ct);
+            }
+
+            transaction.Commit();
+        }
+        catch
+        {
+            transaction.Rollback();
+            throw;
+        }
+    }
+
+    public async Task UpdateEntryClusterAsync(Guid entryId, Guid? clusterId, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            UPDATE knowledge_entries
+            SET cluster_id = $clusterId
+            WHERE entry_id = $entryId;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        command.Parameters.AddWithValue("$entryId", entryId.ToString());
+        command.Parameters.AddWithValue("$clusterId", clusterId?.ToString() ?? (object)DBNull.Value);
+
+        await command.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<IReadOnlyList<(Guid EntryId, string Title, int Version, DateTimeOffset UpdatedAt, Guid? ClusterId)>> GetEntriesWithClusterAsync(CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            SELECT entry_id, title, version, updated_at, cluster_id
+            FROM knowledge_entries;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        var list = new List<(Guid, string, int, DateTimeOffset, Guid?)>();
+        using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var entryId = Guid.Parse(reader.GetString(0));
+            var title = reader.GetString(1);
+            var version = reader.GetInt32(2);
+            var updatedAt = DateTimeOffset.Parse(reader.GetString(3), CultureInfo.InvariantCulture);
+            Guid? clusterId = reader.IsDBNull(4) ? null : Guid.Parse(reader.GetString(4));
+
+            list.Add((entryId, title, version, updatedAt, clusterId));
+        }
+
+        return list;
     }
 
     private static OperationStatus ReadOperationStatus(SqliteDataReader reader)

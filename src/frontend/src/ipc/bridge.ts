@@ -118,6 +118,60 @@ function getMockData(command: string, payload: unknown): unknown {
         updatedAt: new Date(Date.now() - 3600000 * 5).toISOString()
       };
     }
+    case 'entry.update': {
+      const p = payload as { entryId: string; title: string; content: string };
+      return {
+        entryId: p.entryId,
+        title: p.title,
+        content: p.content,
+        version: 4,
+        updatedAt: new Date().toISOString()
+      };
+    }
+    case 'entry.delete':
+      return null;
+    case 'cluster.list': {
+      return [
+        {
+          clusterId: 'c1111111-1111-1111-1111-111111111111',
+          name: 'Docker 容器技術',
+          entries: [
+            {
+              entryId: '11111111-1111-1111-1111-111111111111',
+              title: 'Docker 容器化部署與微服務架構實作指南',
+              version: 2,
+              updatedAt: new Date().toISOString()
+            }
+          ]
+        },
+        {
+          clusterId: 'c2222222-2222-2222-2222-222222222222',
+          name: 'ASP.NET Core 設計',
+          entries: [
+            {
+              entryId: '22222222-2222-2222-2222-222222222222',
+              title: 'ASP.NET Core 10 Web API 架構設計與 Native AOT 編譯實務',
+              version: 1,
+              updatedAt: new Date(Date.now() - 3600000 * 24).toISOString()
+            }
+          ]
+        },
+        {
+          clusterId: '00000000-0000-0000-0000-000000000000',
+          name: '未分類',
+          entries: [
+            {
+              entryId: '33333333-3333-3333-3333-333333333333',
+              title: 'Tailwind CSS v4 擬物化與毛玻璃效果視覺設計規範',
+              version: 3,
+              updatedAt: new Date(Date.now() - 3600000 * 5).toISOString()
+            }
+          ]
+        }
+      ];
+    }
+    case 'cluster.recluster':
+      return null;
     case 'entry.rollback':
       return null;
     case 'entry.history': {
@@ -134,7 +188,8 @@ function getMockData(command: string, payload: unknown): unknown {
       } catch {}
       return {
         llmConfig: { endpoint: 'https://api.deepseek.com/v1', apiKey: 'sk-deepseek-test-key-xxxxxxxxxx', modelName: 'deepseek-chat' },
-        embeddingConfig: { endpoint: 'https://api.openai.com/v1', apiKey: 'sk-openai-test-key-yyyyyyyyyy', modelName: 'text-embedding-3-small' }
+        embeddingConfig: { endpoint: 'https://api.openai.com/v1', apiKey: 'sk-openai-test-key-yyyyyyyyyy', modelName: 'text-embedding-3-small' },
+        clusteringConfig: { eps: 0.25, minPts: 2 }
       };
     }
     case 'config.save': {
@@ -191,17 +246,37 @@ export const ipc = {
   entry: {
     get: (entryId: string) =>
       invoke<{ entryId: string; title: string; content: string; version: number; updatedAt: string }>('entry.get', { entryId }),
+    update: (entryId: string, title: string, content: string) =>
+      invoke<{ entryId: string; title: string; content: string; version: number; updatedAt: string }>('entry.update', { entryId, title, content }),
     rollback: (entryId: string, version: number) =>
       invoke<void>('entry.rollback', { entryId, version }),
     history: (entryId: string) =>
       invoke<Array<{ version: number; contentSnapshot: string; archivedAt: string }>>('entry.history', { entryId }),
+    delete: (entryId: string) =>
+      invoke<void>('entry.delete', { entryId }),
+  },
+  
+  /** 知識分群 */
+  cluster: {
+    list: () =>
+      invoke<Array<{ clusterId: string; name: string; entries: Array<{ entryId: string; title: string; version: number; updatedAt: string }> }>>('cluster.list'),
+    recluster: () =>
+      invoke<void>('cluster.recluster'),
   },
 
   /** 設定管理 */
   config: {
     load: () =>
-      invoke<{ llmConfig: { endpoint: string; apiKey: string; modelName: string }; embeddingConfig: { endpoint: string; apiKey: string; modelName: string } }>('config.load'),
-    save: (settings: { llmConfig: { endpoint: string; apiKey: string; modelName: string }; embeddingConfig: { endpoint: string; apiKey: string; modelName: string } }) =>
+      invoke<{
+        llmConfig: { endpoint: string; apiKey: string; modelName: string };
+        embeddingConfig: { endpoint: string; apiKey: string; modelName: string };
+        clusteringConfig: { eps: number; minPts: number };
+      }>('config.load'),
+    save: (settings: {
+      llmConfig: { endpoint: string; apiKey: string; modelName: string };
+      embeddingConfig: { endpoint: string; apiKey: string; modelName: string };
+      clusteringConfig: { eps: number; minPts: number };
+    }) =>
       invoke<void>('config.save', settings),
     test: (endpoint: string, apiKey: string, modelName: string) =>
       invoke<{ success: boolean; errorMessage?: string }>('config.test', { endpoint, apiKey, modelName }),

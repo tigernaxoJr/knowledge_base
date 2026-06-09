@@ -5,7 +5,7 @@ namespace Assistant.Core.LlmClient;
 public sealed class LlmClientFactory(IConfigService configService, HttpClient? httpClient = null) : ILlmClientFactory
 {
     private readonly IConfigService _configService = configService;
-    private readonly HttpClient _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+    private readonly HttpClient _httpClient = httpClient ?? new HttpClient { Timeout = TimeSpan.FromMinutes(5) };
     private readonly object _lock = new();
 
     private Task<AppSettings>? _settingsTask;

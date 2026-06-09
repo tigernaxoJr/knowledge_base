@@ -17,7 +17,8 @@ public sealed class IngestionService(
     IRoutingDecision routingDecision,
     IKnowledgeEntryService knowledgeEntryService,
     IHdbscanEngine hdbscanEngine,
-    IPromptProvider prompts) : IIngestionService
+    IPromptProvider prompts,
+    IClusterService clusterService) : IIngestionService
 {
     private readonly IRelationalRepository _relationalRepository = relationalRepository;
     private readonly IOutlineGenerator _outlineGenerator = outlineGenerator;
@@ -28,6 +29,7 @@ public sealed class IngestionService(
     private readonly IKnowledgeEntryService _knowledgeEntryService = knowledgeEntryService;
     private readonly IHdbscanEngine _hdbscanEngine = hdbscanEngine;
     private readonly IPromptProvider _prompts = prompts;
+    private readonly IClusterService _clusterService = clusterService;
 
     public async Task IngestAsync(RawDocument document, CancellationToken ct = default)
     {
@@ -56,7 +58,7 @@ public sealed class IngestionService(
 
             if (decision.Action == RoutingAction.Merge && decision.BestMatch != null)
             {
-                await _knowledgeEntryService.MergeAsync(decision.BestMatch.EntryId, document.Content, ct);
+                await _knowledgeEntryService.MergeAsync(decision.BestMatch.EntryId, document.Content, ct: ct);
             }
             else
             {
@@ -64,7 +66,7 @@ public sealed class IngestionService(
                 var generatedTitle = await chatClient.CompleteAsync(_prompts.TitleGeneration, summary, ct);
                 generatedTitle = generatedTitle.Trim('\"', '\'', ' ', '\r', '\n');
 
-                await _knowledgeEntryService.CreateAsync(generatedTitle, document.Content, ct);
+                await _knowledgeEntryService.CreateAsync(generatedTitle, document.Content, ct: ct);
             }
 
             await _relationalRepository.CompleteOperationAsync(operationId, ct);
@@ -141,7 +143,7 @@ public sealed class IngestionService(
                         var title = await chatClient.CompleteAsync(_prompts.TitleGeneration, item.Summary, ct);
                         title = title.Trim('\"', '\'', ' ', '\r', '\n');
 
-                        await _knowledgeEntryService.CreateAsync(title, item.Doc.Content, ct);
+                        await _knowledgeEntryService.CreateAsync(title, item.Doc.Content, triggerRecluster: false, ct: ct);
                     }
                 }
                 else
@@ -166,10 +168,11 @@ public sealed class IngestionService(
                     var mergedContent = await chatClient.CompleteAsync(
                         _prompts.MultiDocumentMerge, mergedContentBuilder.ToString(), ct);
 
-                    await _knowledgeEntryService.CreateAsync(clusterTitle, mergedContent, ct);
+                    await _knowledgeEntryService.CreateAsync(clusterTitle, mergedContent, triggerRecluster: false, ct: ct);
                 }
             }
 
+            await _clusterService.ReclusterAsync(ct);
             await _relationalRepository.CompleteOperationAsync(operationId, ct);
         }
         catch (Exception ex)

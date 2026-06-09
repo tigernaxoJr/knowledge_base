@@ -1,15 +1,28 @@
+using Assistant.Core.Config;
+
 namespace Assistant.Core.Clustering;
 
-public sealed class HdbscanEngine : IHdbscanEngine
+public sealed class HdbscanEngine(IConfigService? configService = null) : IHdbscanEngine
 {
-    private const float Eps = 0.18f; // Cosine distance threshold (equivalent to similarity 0.82)
-    private const int MinPts = 2;   // Minimum points to form a cluster
+    private readonly IConfigService? _configService = configService;
+    private const float DefaultEps = 0.25f; // Loosened from 0.18f to 0.25f to be more inclusive by default
+    private const int DefaultMinPts = 2;
 
-    public Task<int[]> ClusterAsync(IReadOnlyList<float[]> vectors, CancellationToken ct = default)
+    public async Task<int[]> ClusterAsync(IReadOnlyList<float[]> vectors, CancellationToken ct = default)
     {
         if (vectors == null || vectors.Count == 0)
         {
-            return Task.FromResult(Array.Empty<int>());
+            return Array.Empty<int>();
+        }
+
+        float eps = DefaultEps;
+        int minPts = DefaultMinPts;
+
+        if (_configService != null)
+        {
+            var settings = await _configService.LoadAsync(ct);
+            eps = (float)settings.ClusteringConfig.Eps;
+            minPts = settings.ClusteringConfig.MinPts;
         }
 
         int n = vectors.Count;
@@ -30,14 +43,14 @@ public sealed class HdbscanEngine : IHdbscanEngine
                 continue;
             }
 
-            var neighbors = GetNeighbors(i, vectors);
-            if (neighbors.Count < MinPts)
+            var neighbors = GetNeighbors(i, vectors, eps);
+            if (neighbors.Count < minPts)
             {
                 labels[i] = -1; // Noise
             }
             else
             {
-                ExpandCluster(i, neighbors, labels, clusterId, vectors, ct);
+                ExpandCluster(i, neighbors, labels, clusterId, vectors, eps, minPts, ct);
                 clusterId++;
             }
         }
@@ -51,7 +64,7 @@ public sealed class HdbscanEngine : IHdbscanEngine
             }
         }
 
-        return Task.FromResult(labels);
+        return labels;
     }
 
     public async Task<IReadOnlyList<int[]>> IncrementalClusterAsync(
@@ -76,7 +89,7 @@ public sealed class HdbscanEngine : IHdbscanEngine
         return groups;
     }
 
-    private static List<int> GetNeighbors(int index, IReadOnlyList<float[]> vectors)
+    private static List<int> GetNeighbors(int index, IReadOnlyList<float[]> vectors, float eps)
     {
         var neighbors = new List<int>();
         var point = vectors[index];
@@ -84,7 +97,7 @@ public sealed class HdbscanEngine : IHdbscanEngine
         for (int i = 0; i < vectors.Count; i++)
         {
             float dist = CosineDistance(point, vectors[i]);
-            if (dist <= Eps)
+            if (dist <= eps)
             {
                 neighbors.Add(i);
             }
@@ -95,7 +108,7 @@ public sealed class HdbscanEngine : IHdbscanEngine
 
     private static void ExpandCluster(
         int index, List<int> neighbors, int[] labels, int clusterId,
-        IReadOnlyList<float[]> vectors, CancellationToken ct)
+        IReadOnlyList<float[]> vectors, float eps, int minPts, CancellationToken ct)
     {
         labels[index] = clusterId;
 
@@ -116,8 +129,8 @@ public sealed class HdbscanEngine : IHdbscanEngine
             {
                 labels[neighborIndex] = clusterId;
 
-                var nextNeighbors = GetNeighbors(neighborIndex, vectors);
-                if (nextNeighbors.Count >= MinPts)
+                var nextNeighbors = GetNeighbors(neighborIndex, vectors, eps);
+                if (nextNeighbors.Count >= minPts)
                 {
                     // Add new neighbors to search list if they are not already there
                     foreach (var nextNeighbor in nextNeighbors)

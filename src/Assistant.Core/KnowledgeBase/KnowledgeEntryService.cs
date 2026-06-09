@@ -1,6 +1,7 @@
 using Assistant.Core.LlmClient;
 using Assistant.Core.Prompts;
 using Assistant.Core.Storage;
+using Assistant.Core.Clustering;
 
 namespace Assistant.Core.KnowledgeBase;
 
@@ -9,15 +10,17 @@ public sealed class KnowledgeEntryService(
     IVersionControlService versionControl,
     ILanceDbClient lanceDbClient,
     ILlmClientFactory llmClientFactory,
-    IPromptProvider prompts) : IKnowledgeEntryService
+    IPromptProvider prompts,
+    IClusterService clusterService) : IKnowledgeEntryService
 {
     private readonly IRelationalRepository _repository = repository;
     private readonly IVersionControlService _versionControl = versionControl;
     private readonly ILanceDbClient _lanceDbClient = lanceDbClient;
     private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
     private readonly IPromptProvider _prompts = prompts;
+    private readonly IClusterService _clusterService = clusterService;
 
-    public async Task<KnowledgeEntry> CreateAsync(string title, string content, CancellationToken ct = default)
+    public async Task<KnowledgeEntry> CreateAsync(string title, string content, bool triggerRecluster = true, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("Title cannot be empty.", nameof(title));
         if (content == null) throw new ArgumentNullException(nameof(content));
@@ -27,6 +30,11 @@ public sealed class KnowledgeEntryService(
         var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
         var vector = await embeddingClient.EmbedAsync(content, ct);
         await _lanceDbClient.UpsertEntryVectorAsync(entryId, title, vector, ct);
+
+        if (triggerRecluster)
+        {
+            await _clusterService.ReclusterAsync(ct);
+        }
 
         return new KnowledgeEntry
         {
@@ -39,7 +47,7 @@ public sealed class KnowledgeEntryService(
     }
 
     public async Task<KnowledgeEntry> MergeAsync(
-        Guid entryId, string newDocumentContent, CancellationToken ct = default)
+        Guid entryId, string newDocumentContent, bool triggerRecluster = true, CancellationToken ct = default)
     {
         var operationId = await _repository.StartOperationAsync(
             OperationKind.Merge, entryId, "knowledge-entry-merge", ct);
@@ -72,11 +80,16 @@ public sealed class KnowledgeEntryService(
 
             var nextVersion = currentEntry.Version + 1;
             var now = DateTimeOffset.UtcNow;
-            await _repository.UpdateEntryAsync(entryId, mergedContent, nextVersion, now, ct);
+            await _repository.UpdateEntryAsync(entryId, currentEntry.Title, mergedContent, nextVersion, now, ct);
 
             var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
             var newVector = await embeddingClient.EmbedAsync(mergedContent, ct);
             await _lanceDbClient.UpsertEntryVectorAsync(entryId, currentEntry.Title, newVector, ct);
+
+            if (triggerRecluster)
+            {
+                await _clusterService.ReclusterAsync(ct);
+            }
 
             await _repository.CompleteOperationAsync(operationId, ct);
 
@@ -114,7 +127,7 @@ public sealed class KnowledgeEntryService(
         };
     }
 
-    public async Task RollbackAsync(Guid entryId, int targetVersion, CancellationToken ct = default)
+    public async Task RollbackAsync(Guid entryId, int targetVersion, bool triggerRecluster = true, CancellationToken ct = default)
     {
         var snapshot = await _versionControl.GetVersionAsync(entryId, targetVersion, ct);
         if (snapshot == null)
@@ -141,10 +154,73 @@ public sealed class KnowledgeEntryService(
 
         var nextVersion = currentEntry.Version + 1;
         var now = DateTimeOffset.UtcNow;
-        await _repository.UpdateEntryAsync(entryId, snapshot.ContentSnapshot, nextVersion, now, ct);
+        await _repository.UpdateEntryAsync(entryId, currentEntry.Title, snapshot.ContentSnapshot, nextVersion, now, ct);
 
         var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
         var restoredVector = await embeddingClient.EmbedAsync(snapshot.ContentSnapshot, ct);
         await _lanceDbClient.UpsertEntryVectorAsync(entryId, currentEntry.Title, restoredVector, ct);
+
+        if (triggerRecluster)
+        {
+            await _clusterService.ReclusterAsync(ct);
+        }
+    }
+
+    public async Task<KnowledgeEntry> UpdateAsync(
+        Guid entryId, string title, string content, bool triggerRecluster = true, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("Title cannot be empty.", nameof(title));
+        if (content == null) throw new ArgumentNullException(nameof(content));
+
+        var entryData = await _repository.GetEntryAsync(entryId, ct);
+        if (entryData == null)
+        {
+            throw new KeyNotFoundException($"Knowledge entry with ID {entryId} not found.");
+        }
+
+        var currentEntry = new KnowledgeEntry
+        {
+            EntryId = entryData.Value.EntryId,
+            Title = entryData.Value.Title,
+            Content = entryData.Value.Content,
+            Version = entryData.Value.Version,
+            UpdatedAt = entryData.Value.UpdatedAt
+        };
+
+        await _versionControl.ArchiveAsync(currentEntry, ct);
+
+        var nextVersion = currentEntry.Version + 1;
+        var now = DateTimeOffset.UtcNow;
+
+        await _repository.UpdateEntryAsync(entryId, title, content, nextVersion, now, ct);
+
+        var embeddingClient = _llmClientFactory.CreateEmbeddingClient();
+        var newVector = await embeddingClient.EmbedAsync(content, ct);
+        await _lanceDbClient.UpsertEntryVectorAsync(entryId, title, newVector, ct);
+
+        if (triggerRecluster)
+        {
+            await _clusterService.ReclusterAsync(ct);
+        }
+
+        return new KnowledgeEntry
+        {
+            EntryId = entryId,
+            Title = title,
+            Content = content,
+            Version = nextVersion,
+            UpdatedAt = now
+        };
+    }
+
+    public async Task DeleteAsync(Guid entryId, bool triggerRecluster = true, CancellationToken ct = default)
+    {
+        await _repository.DeleteEntryAsync(entryId, ct);
+        await _lanceDbClient.DeleteEntryVectorAsync(entryId, ct);
+
+        if (triggerRecluster)
+        {
+            await _clusterService.ReclusterAsync(ct);
+        }
     }
 }

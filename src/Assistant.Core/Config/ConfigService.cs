@@ -65,6 +65,11 @@ public sealed class ConfigService : IConfigService
                         if (!string.IsNullOrEmpty(devSettings.EmbeddingConfig.ApiKey)) settings.EmbeddingConfig.ApiKey = devSettings.EmbeddingConfig.ApiKey;
                         if (!string.IsNullOrEmpty(devSettings.EmbeddingConfig.ModelName)) settings.EmbeddingConfig.ModelName = devSettings.EmbeddingConfig.ModelName;
                     }
+                    if (devSettings.ClusteringConfig != null)
+                    {
+                        if (devSettings.ClusteringConfig.Eps > 0) settings.ClusteringConfig.Eps = devSettings.ClusteringConfig.Eps;
+                        if (devSettings.ClusteringConfig.MinPts > 0) settings.ClusteringConfig.MinPts = devSettings.ClusteringConfig.MinPts;
+                    }
                 }
             }
             catch { }
@@ -100,6 +105,11 @@ public sealed class ConfigService : IConfigService
                 Endpoint = settings.EmbeddingConfig.Endpoint,
                 ApiKey = settings.EmbeddingConfig.ApiKey,
                 ModelName = settings.EmbeddingConfig.ModelName
+            },
+            ClusteringConfig = new ClusteringConfig
+            {
+                Eps = settings.ClusteringConfig.Eps,
+                MinPts = settings.ClusteringConfig.MinPts
             }
         };
 

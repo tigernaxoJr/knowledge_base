@@ -204,6 +204,54 @@ public sealed class LanceDbClient : ILanceDbClient, IDisposable
         await table.Delete($"entry_id = '{entryId}'");
     }
 
+    public async Task<IReadOnlyList<(Guid EntryId, float[] Vector)>> GetAllEntryVectorsAsync(CancellationToken ct = default)
+    {
+        var connection = await GetConnectionAsync(ct);
+        var tables = await connection.TableNames();
+        if (!tables.Contains("knowledge_entries_vector"))
+        {
+            return System.Array.Empty<(Guid, float[])>();
+        }
+
+        var table = await connection.OpenTable("knowledge_entries_vector");
+        using var reader = await table.Query().ToBatches();
+        
+        var results = new List<(Guid Id, float[] Vector)>();
+        await foreach (var batch in reader)
+        {
+            var idColumn = batch.Column("entry_id") as StringArray;
+            var vectorColumn = batch.Column("vector") as FixedSizeListArray;
+            
+            if (idColumn != null && vectorColumn != null)
+            {
+                var floatValues = vectorColumn.Values as FloatArray;
+                var listType = vectorColumn.Data.DataType as FixedSizeListType;
+                int valueLength = listType?.ListSize ?? 0;
+                
+                if (floatValues != null && valueLength > 0)
+                {
+                    for (int i = 0; i < batch.Length; i++)
+                    {
+                        if (idColumn.IsNull(i) || vectorColumn.IsNull(i)) continue;
+                        
+                        var idStr = idColumn.GetString(i);
+                        if (Guid.TryParse(idStr, out var id))
+                        {
+                            var vector = new float[valueLength];
+                            int startOffset = i * valueLength;
+                            for (int j = 0; j < valueLength; j++)
+                            {
+                                vector[j] = floatValues.GetValue(startOffset + j) ?? 0.0f;
+                            }
+                            results.Add((id, vector));
+                        }
+                    }
+                }
+            }
+        }
+        return results;
+    }
+
     public void Dispose()
     {
         if (_isDisposed) return;

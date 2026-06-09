@@ -28,6 +28,7 @@ internal static class Program
         services.AddSingleton<Assistant.Core.KnowledgeBase.IVersionControlService, Assistant.Core.KnowledgeBase.VersionControlService>();
         services.AddSingleton<Assistant.Core.KnowledgeBase.IKnowledgeEntryService, Assistant.Core.KnowledgeBase.KnowledgeEntryService>();
         services.AddSingleton<Assistant.Core.Clustering.IHdbscanEngine, Assistant.Core.Clustering.HdbscanEngine>();
+        services.AddSingleton<Assistant.Core.Clustering.IClusterService, Assistant.Core.Clustering.ClusterService>();
         services.AddSingleton<Assistant.Core.Ingestion.IIngestionService, Assistant.Core.Ingestion.IngestionService>();
 
         var provider = services.BuildServiceProvider();

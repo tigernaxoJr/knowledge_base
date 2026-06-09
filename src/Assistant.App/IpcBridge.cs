@@ -5,6 +5,7 @@ using Assistant.Core.Ingestion;
 using Assistant.Core.KnowledgeBase;
 using Assistant.Core.Search;
 using Assistant.Core.LlmClient;
+using Assistant.Core.Clustering;
 
 namespace Assistant.App;
 
@@ -39,6 +40,12 @@ internal sealed record RollbackPayload(
     [property: JsonPropertyName("version")] int Version
 );
 
+internal sealed record EntryUpdatePayload(
+    [property: JsonPropertyName("entryId")] Guid EntryId,
+    [property: JsonPropertyName("title")] string Title = "",
+    [property: JsonPropertyName("content")] string Content = ""
+);
+
 internal sealed record HistoryPayload(
     [property: JsonPropertyName("entryId")] Guid EntryId
 );
@@ -65,11 +72,13 @@ internal sealed record TestConfigResult(
 [JsonSerializable(typeof(IpcResponse<KnowledgeEntry>))]
 [JsonSerializable(typeof(IpcResponse<List<SearchResult>>))]
 [JsonSerializable(typeof(IpcResponse<List<KnowledgeVersion>>))]
+[JsonSerializable(typeof(IpcResponse<List<ClusterDetailDto>>))]
 [JsonSerializable(typeof(IpcResponse<AppSettings>))]
 [JsonSerializable(typeof(IpcResponse<TestConfigResult>))]
 [JsonSerializable(typeof(IngestPayload))]
 [JsonSerializable(typeof(EntryGetPayload))]
 [JsonSerializable(typeof(RollbackPayload))]
+[JsonSerializable(typeof(EntryUpdatePayload))]
 [JsonSerializable(typeof(HistoryPayload))]
 [JsonSerializable(typeof(SearchPayload))]
 [JsonSerializable(typeof(TestConfigPayload))]
@@ -78,6 +87,10 @@ internal sealed record TestConfigResult(
 [JsonSerializable(typeof(KnowledgeEntry))]
 [JsonSerializable(typeof(List<SearchResult>))]
 [JsonSerializable(typeof(List<KnowledgeVersion>))]
+[JsonSerializable(typeof(ClusterDetailDto))]
+[JsonSerializable(typeof(ClusterEntryDto))]
+[JsonSerializable(typeof(List<ClusterDetailDto>))]
+[JsonSerializable(typeof(List<ClusterEntryDto>))]
 [JsonSourceGenerationOptions(PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
 internal partial class IpcJsonContext : JsonSerializerContext { }
 
@@ -90,7 +103,8 @@ internal sealed class IpcBridge(
     IConfigService config,
     IVersionControlService versionControl,
     IVectorSearchEngine searchEngine,
-    ILlmClientFactory llmClientFactory)
+    ILlmClientFactory llmClientFactory,
+    IClusterService clusterService)
 {
     private readonly IIngestionService _ingestion = ingestion;
     private readonly IKnowledgeEntryService _knowledge = knowledge;
@@ -98,6 +112,7 @@ internal sealed class IpcBridge(
     private readonly IVersionControlService _versionControl = versionControl;
     private readonly IVectorSearchEngine _searchEngine = searchEngine;
     private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
+    private readonly IClusterService _clusterService = clusterService;
 
     /// <summary>處理單一 IPC 請求，回傳序列化後的 JSON 回應字串</summary>
     public async Task<string> HandleAsync(string requestJson)
@@ -129,8 +144,14 @@ internal sealed class IpcBridge(
 
         // ── 知識條目查詢 ──────────────────────────────────────────────────
         "entry.get"      => HandleEntryGetAsync(request),
+        "entry.update"   => HandleEntryUpdateAsync(request),
         "entry.rollback" => HandleEntryRollbackAsync(request),
         "entry.history"  => HandleEntryHistoryAsync(request),
+        "entry.delete"   => HandleEntryDeleteAsync(request),
+
+        // ── 知識分群 ──────────────────────────────────────────────────────
+        "cluster.list"      => HandleClusterListAsync(request),
+        "cluster.recluster" => HandleClusterReclusterAsync(request),
 
         // ── 設定管理 ──────────────────────────────────────────────────────
         "config.load"    => HandleConfigLoadAsync(request),
@@ -186,6 +207,14 @@ internal sealed class IpcBridge(
         return null;
     }
 
+    private async Task<object?> HandleEntryUpdateAsync(IpcRequest req)
+    {
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.EntryUpdatePayload);
+        if (payload == null) throw new ArgumentException("Invalid EntryUpdatePayload");
+
+        return await _knowledge.UpdateAsync(payload.EntryId, payload.Title, payload.Content);
+    }
+
     private async Task<object?> HandleEntryHistoryAsync(IpcRequest req)
     {
         var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.HistoryPayload);
@@ -193,6 +222,15 @@ internal sealed class IpcBridge(
 
         var history = await _versionControl.GetHistoryAsync(payload.EntryId);
         return history.ToList();
+    }
+
+    private async Task<object?> HandleEntryDeleteAsync(IpcRequest req)
+    {
+        var payload = JsonSerializer.Deserialize(req.Payload, IpcJsonContext.Default.EntryGetPayload);
+        if (payload == null) throw new ArgumentException("Invalid EntryGetPayload");
+
+        await _knowledge.DeleteAsync(payload.EntryId);
+        return null;
     }
 
     private async Task<object?> HandleConfigLoadAsync(IpcRequest req)
@@ -217,6 +255,18 @@ internal sealed class IpcBridge(
 
         var (success, errorMessage) = await _config.TestConnectionAsync(payload.Endpoint, payload.ApiKey, payload.ModelName);
         return new TestConfigResult { Success = success, ErrorMessage = errorMessage };
+    }
+
+    private async Task<object?> HandleClusterListAsync(IpcRequest req)
+    {
+        var clusters = await _clusterService.GetClustersAsync();
+        return clusters.ToList();
+    }
+
+    private async Task<object?> HandleClusterReclusterAsync(IpcRequest req)
+    {
+        await _clusterService.ReclusterAsync();
+        return null;
     }
 
     // ── 輔助方法 ──────────────────────────────────────────────────────────
@@ -253,6 +303,11 @@ internal sealed class IpcBridge(
         {
             var response = new IpcResponse<TestConfigResult> { RequestId = requestId, Success = true, Data = testResult };
             return JsonSerializer.Serialize(response, typeof(IpcResponse<TestConfigResult>), IpcJsonContext.Default);
+        }
+        if (data is List<ClusterDetailDto> clusters)
+        {
+            var response = new IpcResponse<List<ClusterDetailDto>> { RequestId = requestId, Success = true, Data = clusters };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<List<ClusterDetailDto>>), IpcJsonContext.Default);
         }
 
         throw new NotSupportedException($"Serialization of type {data.GetType().FullName} is not supported in Native AOT.");

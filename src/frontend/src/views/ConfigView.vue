@@ -5,6 +5,7 @@ import { ipc } from '../ipc/bridge'
 const config = ref({
   llmConfig: { endpoint: '', apiKey: '', modelName: '' },
   embeddingConfig: { endpoint: '', apiKey: '', modelName: '' },
+  clusteringConfig: { eps: 0.25, minPts: 2 }
 })
 const showLlmKey = ref(false)
 const showEmbedKey = ref(false)
@@ -22,6 +23,7 @@ async function loadConfig() {
     if (data) {
       config.value.llmConfig = data.llmConfig || { endpoint: '', apiKey: '', modelName: '' }
       config.value.embeddingConfig = data.embeddingConfig || { endpoint: '', apiKey: '', modelName: '' }
+      config.value.clusteringConfig = data.clusteringConfig || { eps: 0.25, minPts: 2 }
     }
   } catch (err) {
     console.error('Failed to load config:', err)
@@ -98,6 +100,22 @@ async function testConnection() {
               <input v-model="config.embeddingConfig.apiKey" :type="showEmbedKey ? 'text' : 'password'" placeholder="sk-..." class="w-full bg-[#121620] border border-white/5 rounded py-2 pl-3 pr-9 text-xs text-white focus:outline-none focus:border-sky-500 transition" />
               <button @click="showEmbedKey = !showEmbedKey" class="absolute right-2.5 top-2 text-[#828b9a] hover:text-white">{{ showEmbedKey ? 'Hide' : 'Show' }}</button>
             </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bg-[#11141a]/40 border border-white/5 rounded p-5 space-y-4">
+        <h2 class="text-xs font-semibold text-white tracking-widest uppercase">Clustering Config (分群設定)</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="space-y-1">
+            <label class="text-[10px] text-[#828b9a] font-medium tracking-wide uppercase">Eps (餘弦距離閾值 / 越小越嚴格)</label>
+            <input v-model.number="config.clusteringConfig.eps" type="number" step="0.01" min="0.01" max="1.0" class="w-full bg-[#121620] border border-white/5 rounded py-2 px-3 text-xs text-white focus:outline-none focus:border-sky-500 transition" />
+            <p class="text-[9px] text-[#828b9a] mt-1">預設 0.25 (相似度大於 0.75)。拉大此值（如 0.35）能放寬相似度要求，更容易合併分群。</p>
+          </div>
+          <div class="space-y-1">
+            <label class="text-[10px] text-[#828b9a] font-medium tracking-wide uppercase">MinPts (分群最小成員數)</label>
+            <input v-model.number="config.clusteringConfig.minPts" type="number" step="1" min="1" class="w-full bg-[#121620] border border-white/5 rounded py-2 px-3 text-xs text-white focus:outline-none focus:border-sky-500 transition" />
+            <p class="text-[9px] text-[#828b9a] mt-1">預設 2。代表一個主題群組最少要包含的條目筆數。設為 1 時只要有文件即可自成一類。</p>
           </div>
         </div>
       </div>

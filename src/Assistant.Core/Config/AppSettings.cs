@@ -18,12 +18,20 @@ public sealed class EmbeddingConfig
     public string ModelName { get; set; } = string.Empty;
 }
 
+/// <summary>分群參數設定</summary>
+public sealed class ClusteringConfig
+{
+    public double Eps { get; set; } = 0.25;
+    public int MinPts { get; set; } = 2;
+}
+
 /// <summary>應用程式設定根物件</summary>
 public sealed class AppSettings
 {
     public int SummaryLimit { get; set; } = 200;
     public LlmConfig LlmConfig { get; set; } = new();
     public EmbeddingConfig EmbeddingConfig { get; set; } = new();
+    public ClusteringConfig ClusteringConfig { get; set; } = new();
 }
 
 /// <summary>
@@ -33,5 +41,6 @@ public sealed class AppSettings
 [JsonSerializable(typeof(AppSettings))]
 [JsonSerializable(typeof(LlmConfig))]
 [JsonSerializable(typeof(EmbeddingConfig))]
+[JsonSerializable(typeof(ClusteringConfig))]
 [JsonSourceGenerationOptions(WriteIndented = true)]
 public partial class AppSettingsJsonContext : JsonSerializerContext { }

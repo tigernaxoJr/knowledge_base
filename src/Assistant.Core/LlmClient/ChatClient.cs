@@ -54,6 +54,42 @@ public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Ta
             throw new InvalidOperationException("Received empty choices from LLM API response.");
         }
 
-        return chatResponse.Choices[0].Message.Content;
+        var content = chatResponse.Choices[0].Message.Content;
+        return StripThoughtBlocks(content);
+    }
+
+    private static string StripThoughtBlocks(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return content;
+
+        string[] tags = ["thought", "think"];
+        bool replaced;
+        do
+        {
+            replaced = false;
+            foreach (var tag in tags)
+            {
+                var startTag = $"<{tag}";
+                var endTag = $"</{tag}>";
+                
+                int startIndex = content.IndexOf(startTag, StringComparison.OrdinalIgnoreCase);
+                if (startIndex != -1)
+                {
+                    int startTagEnd = content.IndexOf('>', startIndex);
+                    if (startTagEnd != -1)
+                    {
+                        int endIndex = content.IndexOf(endTag, startTagEnd, StringComparison.OrdinalIgnoreCase);
+                        if (endIndex != -1)
+                        {
+                            content = content.Remove(startIndex, endIndex + endTag.Length - startIndex);
+                            replaced = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        } while (replaced);
+
+        return content.Trim();
     }
 }

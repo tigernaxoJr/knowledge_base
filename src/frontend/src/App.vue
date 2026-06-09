@@ -3,13 +3,15 @@ import { ref } from 'vue'
 import SearchView from './views/SearchView.vue'
 import IngestView from './views/IngestView.vue'
 import ConfigView from './views/ConfigView.vue'
+import ClusterView from './views/ClusterView.vue'
 
-type TabKey = 'search' | 'ingest' | 'config'
+type TabKey = 'search' | 'clusters' | 'ingest' | 'config'
 
 const currentTab = ref<TabKey>('search')
 
 const tabs: Array<{ key: TabKey; label: string; title: string; icon: string }> = [
   { key: 'search', label: '知識搜尋', title: '語意搜尋 / RAG Query', icon: 'M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z' },
+  { key: 'clusters', label: '分群檢視', title: '主題分群 / Topic Clustering', icon: 'M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z' },
   { key: 'ingest', label: '文件導入', title: '文件導入 / Knowledge Ingestion', icon: 'M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z' },
   { key: 'config', label: '模型設定', title: '模型與端點設定 / Configuration', icon: 'M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z' },
 ]
@@ -64,6 +66,7 @@ const tabs: Array<{ key: TabKey; label: string; title: string; icon: string }> =
 
       <div class="flex-1 overflow-hidden">
         <SearchView v-if="currentTab === 'search'" />
+        <ClusterView v-else-if="currentTab === 'clusters'" />
         <IngestView v-else-if="currentTab === 'ingest'" />
         <ConfigView v-else />
       </div>

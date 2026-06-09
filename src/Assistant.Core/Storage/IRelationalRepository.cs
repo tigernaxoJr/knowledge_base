@@ -40,14 +40,31 @@ public interface IRelationalRepository
         string title, string content, CancellationToken ct = default);
 
     Task UpdateEntryAsync(
-        Guid entryId, string content, int version,
+        Guid entryId, string title, string content, int version,
         DateTimeOffset updatedAt, CancellationToken ct = default);
+
+    Task DeleteEntryAsync(
+        Guid entryId, CancellationToken ct = default);
 
     Task<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)?> GetEntryAsync(
         Guid entryId, CancellationToken ct = default);
 
     Task<IReadOnlyList<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)>> GetEntriesAsync(
         IEnumerable<Guid> entryIds, CancellationToken ct = default);
+
+    Task<IReadOnlyList<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)>> GetAllEntriesAsync(CancellationToken ct = default);
+
+    Task<IReadOnlyList<(Guid ClusterId, string Name, DateTimeOffset CreatedAt)>> GetClustersAsync(CancellationToken ct = default);
+
+    Task ClearClustersAsync(CancellationToken ct = default);
+
+    Task InsertClusterAsync(Guid clusterId, string name, DateTimeOffset createdAt, CancellationToken ct = default);
+
+    Task DeleteClusterAsync(Guid clusterId, CancellationToken ct = default);
+
+    Task UpdateEntryClusterAsync(Guid entryId, Guid? clusterId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<(Guid EntryId, string Title, int Version, DateTimeOffset UpdatedAt, Guid? ClusterId)>> GetEntriesWithClusterAsync(CancellationToken ct = default);
 
     Task InsertVersionAsync(
         Guid entryId, string contentSnapshot, int version,
