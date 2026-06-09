@@ -43,10 +43,17 @@ public sealed class EmbeddingClient : IEmbeddingClient
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ApiKey);
         }
 
+        // 避免本地或部分輕量向量模型伺服器的 512-token 實體批次大小限制（如 Ollama/llama.cpp 的預設限制）。
+        // 中文字元經 Tokenizer 分詞後常為 1.5 ~ 2 tokens，因此將字數截斷至 300 字內（約 450 tokens 內）以保障穩定性，
+        // 且前 300 字所包含的核心主題已足夠進行語意相似度檢索。
+        var truncatedTexts = texts
+            .Select(t => t.Length > 300 ? t.Substring(0, 300) : t)
+            .ToList();
+
         var requestBody = new EmbeddingRequest
         {
             Model = _config.ModelName,
-            Input = texts.ToList()
+            Input = truncatedTexts
         };
 
         var json = JsonSerializer.Serialize(requestBody, ApiJsonContext.Default.EmbeddingRequest);

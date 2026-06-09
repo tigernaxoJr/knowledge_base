@@ -21,6 +21,7 @@ public sealed class EmbeddingConfig
 /// <summary>應用程式設定根物件</summary>
 public sealed class AppSettings
 {
+    public int SummaryLimit { get; set; } = 200;
     public LlmConfig LlmConfig { get; set; } = new();
     public EmbeddingConfig EmbeddingConfig { get; set; } = new();
 }

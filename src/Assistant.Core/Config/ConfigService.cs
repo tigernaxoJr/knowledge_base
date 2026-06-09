@@ -49,6 +49,10 @@ public sealed class ConfigService : IConfigService
                 if (devSettings != null)
                 {
                     // 合併設定
+                    if (devSettings.SummaryLimit > 0)
+                    {
+                        settings.SummaryLimit = devSettings.SummaryLimit;
+                    }
                     if (devSettings.LlmConfig != null)
                     {
                         if (!string.IsNullOrEmpty(devSettings.LlmConfig.Endpoint)) settings.LlmConfig.Endpoint = devSettings.LlmConfig.Endpoint;
@@ -84,6 +88,7 @@ public sealed class ConfigService : IConfigService
         // Clone settings to avoid mutating the original object in memory
         var clone = new AppSettings
         {
+            SummaryLimit = settings.SummaryLimit,
             LlmConfig = new LlmConfig
             {
                 Endpoint = settings.LlmConfig.Endpoint,

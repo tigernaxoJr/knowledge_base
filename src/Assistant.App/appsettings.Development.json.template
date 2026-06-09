@@ -1,4 +1,5 @@
 {
+  "SummaryLimit": 200,
   "LlmConfig": {
     "Endpoint": "http://localhost:11434/v1",
     "ApiKey": "",
