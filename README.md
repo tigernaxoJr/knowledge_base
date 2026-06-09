@@ -21,6 +21,31 @@
 6. **本地端安全設定機制**：
    * 大模型與向量模型的 API 端點、金鑰（API Key）皆儲存於本地 `appsettings.json` 中。
    * 金鑰欄位採用 **AES-256 加密** 儲存，保護您的隱私。
+---
+
+## 本專案與傳統 RAG 及知識圖譜（Knowledge Graph / GraphRAG）的差異與設計考量
+
+### 1. 與傳統 RAG（檢索增強生成）的差異
+傳統 RAG 系統通常採用「切片（Chunking）+ 獨立向量檢索 + LLM 拼湊回答」的模式，這帶來了許多痛點：
+* **碎片化與語意斷裂**：將文章切成固定長度（如 500 字）的片段，容易導致完整語意被切斷，問答時 LLM 拿到的只是碎片，缺乏全局上下文。
+* **運行成本高 (Token 消耗大)**：每次查詢都需要檢索多個碎片（Top-K），並將大量 raw chunks 餵給 LLM，Token 消耗隨文件量呈線性或指數級增長。
+* **知識庫混亂且無版本管理**：大量重複、衝突或過期的文件碎片並存，沒有定稿與知識演進的概念。
+
+**本專案採用的「雙軌制增量融合 RAG」：**
+* **語意路由與局部合併 (Merge)**：新文件導入時，先由 LLM 提煉 400 字大綱並進行語意相似度路由。若相似度高（$\ge 0.82$），則使用 LLM 將新資訊**增量融合**至既有的「知識條目（Knowledge Entry）」中，而非產生新的碎片；若相似度低，則自動開闢為全新的主題。
+* **精準的局部 Context**：由於知識條目是高度結構化且整合過的完整主題文章，查詢與更新時 LLM 只需要關注該主題與新文件，保持在 LLM 最佳注意力區間，大幅降低 Token 消耗。
+* **完整的知識版本控制**：每次進行知識合併時，系統會自動留存舊版並支持**一鍵回滾 (Rollback)**，讓知識管理具備高容錯性與可追溯性。
+
+---
+
+### 2. 為什麼不採用知識圖譜（Knowledge Graph / GraphRAG）？
+雖然 GraphRAG 在關聯性分析上表現優異，但其背後的沉重代價使其不適合本專案的定位：
+* **架構極度重型與複雜**：知識圖譜需要複雜的實體（Entities）與關係（Relations）提取，維護一個圖形資料庫（如 Neo4j）或複雜的圖形索引，與本專案「輕量、開箱即用」的理念不符。
+* **高昂的 Token 與計算開銷**：建立圖譜關係需要對所有文件進行極高頻率的 LLM 呼叫，不僅建置與更新緩慢，API 費用也極度昂貴。
+* **Native AOT 移植性差**：本專案的宗旨之一是能完全編譯為單一執行檔（Native AOT），在本地端 100% 離線運行。圖形資料庫及相關的圖演算法庫多數不相容於 .NET Native AOT，將嚴重破壞專案的打包與輕量化優勢。
+
+**我們的替代方案：**
+* 我們採用 **語意路由 + DBSCAN 密度分群**。透過 DBSCAN 純 C# 演算法對大綱向量進行冷啟動或定期局部聚類，自動在本地端找出隱藏的主題聚類並過濾噪點，在不依賴重型圖譜的前提下，依然實現了主題自動歸類與結構化整理。
 
 ---
 
@@ -46,14 +71,14 @@ graph TD
 ## 專案結構規格
 
 * `src/`：原始碼目錄
-  * [`Assistant.Core`](file:///c:/workspace/assitant/src/Assistant.Core)：核心邏輯庫，設計上完全不使用反射 JSON，為 AOT 相容。
-  * [`Assistant.App`](file:///c:/workspace/assitant/src/Assistant.App)：WinForms WebView2 桌面容器。
-  * [`frontend`](file:///c:/workspace/assitant/src/frontend)：Vue 3 + Vite 前端。
+  * [Assistant.Core](file:///c:/workspace/knowledge_base/src/Assistant.Core)：核心邏輯庫，設計上完全不使用反射 JSON，為 AOT 相容。
+  * [Assistant.App](file:///c:/workspace/knowledge_base/src/Assistant.App)：WinForms WebView2 桌面容器。
+  * [frontend](file:///c:/workspace/knowledge_base/src/frontend)：Vue 3 + Vite 前端。
 * `tests/`：測試目錄
-  * [`Assistant.Core.Tests`](file:///c:/workspace/assitant/tests/Assistant.Core.Tests)：xUnit 單元測試專案。
+  * [Assistant.Core.Tests](file:///c:/workspace/knowledge_base/tests/Assistant.Core.Tests)：xUnit 單元測試專案。
 * `docs/`：系統規格設計書
-  * [`system_architecture_specification.md`](file:///c:/workspace/assitant/docs/system_architecture_specification.md)
-  * [`project_structure_specification.md`](file:///c:/workspace/assitant/docs/project_structure_specification.md)
+  * [system_architecture_specification.md](file:///c:/workspace/knowledge_base/docs/system_architecture_specification.md)
+  * [project_structure_specification.md](file:///c:/workspace/knowledge_base/docs/project_structure_specification.md)
 
 ---
 
