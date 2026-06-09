@@ -4,27 +4,18 @@ using Assistant.Core.Storage;
 
 namespace Assistant.Core.KnowledgeBase;
 
-public sealed class KnowledgeEntryService : IKnowledgeEntryService
+public sealed class KnowledgeEntryService(
+    IRelationalRepository repository,
+    IVersionControlService versionControl,
+    ILanceDbClient lanceDbClient,
+    ILlmClientFactory llmClientFactory,
+    IPromptProvider prompts) : IKnowledgeEntryService
 {
-    private readonly IRelationalRepository _repository;
-    private readonly IVersionControlService _versionControl;
-    private readonly ILanceDbClient _lanceDbClient;
-    private readonly ILlmClientFactory _llmClientFactory;
-    private readonly IPromptProvider _prompts;
-
-    public KnowledgeEntryService(
-        IRelationalRepository repository,
-        IVersionControlService versionControl,
-        ILanceDbClient lanceDbClient,
-        ILlmClientFactory llmClientFactory,
-        IPromptProvider prompts)
-    {
-        _repository = repository;
-        _versionControl = versionControl;
-        _lanceDbClient = lanceDbClient;
-        _llmClientFactory = llmClientFactory;
-        _prompts = prompts;
-    }
+    private readonly IRelationalRepository _repository = repository;
+    private readonly IVersionControlService _versionControl = versionControl;
+    private readonly ILanceDbClient _lanceDbClient = lanceDbClient;
+    private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
+    private readonly IPromptProvider _prompts = prompts;
 
     public async Task<KnowledgeEntry> CreateAsync(string title, string content, CancellationToken ct = default)
     {

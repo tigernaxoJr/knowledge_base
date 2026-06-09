@@ -2,14 +2,9 @@ using Assistant.Core.Storage;
 
 namespace Assistant.Core.KnowledgeBase;
 
-public sealed class VersionControlService : IVersionControlService
+public sealed class VersionControlService(IRelationalRepository repository) : IVersionControlService
 {
-    private readonly IRelationalRepository _repository;
-
-    public VersionControlService(IRelationalRepository repository)
-    {
-        _repository = repository;
-    }
+    private readonly IRelationalRepository _repository = repository;
 
     public async Task ArchiveAsync(KnowledgeEntry entry, CancellationToken ct = default)
     {
@@ -44,7 +39,18 @@ public sealed class VersionControlService : IVersionControlService
 
     public async Task<KnowledgeVersion?> GetVersionAsync(Guid entryId, int version, CancellationToken ct = default)
     {
-        var history = await GetHistoryAsync(entryId, ct);
-        return history.FirstOrDefault(h => h.Version == version);
+        var dbVersion = await _repository.GetVersionAsync(entryId, version, ct);
+        if (dbVersion == null)
+        {
+            return null;
+        }
+
+        return new KnowledgeVersion
+        {
+            EntryId = entryId,
+            Version = dbVersion.Value.Version,
+            ContentSnapshot = dbVersion.Value.ContentSnapshot,
+            ArchivedAt = dbVersion.Value.ArchivedAt
+        };
     }
 }

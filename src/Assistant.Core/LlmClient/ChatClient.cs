@@ -5,20 +5,15 @@ using Assistant.Core.Config;
 
 namespace Assistant.Core.LlmClient;
 
-public sealed class ChatClient : IChatClient
+public sealed class ChatClient(HttpClient httpClient, Func<CancellationToken, Task<LlmConfig>> configProvider) : IChatClient
 {
-    private readonly HttpClient _httpClient;
-    private readonly LlmConfig _config;
-
-    public ChatClient(HttpClient httpClient, LlmConfig config)
-    {
-        _httpClient = httpClient;
-        _config = config;
-    }
+    private readonly HttpClient _httpClient = httpClient;
+    private readonly Func<CancellationToken, Task<LlmConfig>> _configProvider = configProvider;
 
     public async Task<string> CompleteAsync(string systemPrompt, string userMessage, CancellationToken ct = default)
     {
-        var endpoint = _config.Endpoint;
+        var config = await _configProvider(ct);
+        var endpoint = config.Endpoint;
         if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out _))
         {
             throw new InvalidOperationException("大模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置大模型端點與 API 金鑰！");
@@ -26,14 +21,14 @@ public sealed class ChatClient : IChatClient
         var requestUrl = endpoint.TrimEnd('/') + "/chat/completions";
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
-        if (!string.IsNullOrEmpty(_config.ApiKey))
+        if (!string.IsNullOrEmpty(config.ApiKey))
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
         }
 
         var requestBody = new ChatCompletionRequest
         {
-            Model = _config.ModelName,
+            Model = config.ModelName,
             Messages =
             [
                 new ChatMessage { Role = "system", Content = systemPrompt },

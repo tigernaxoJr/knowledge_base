@@ -9,97 +9,64 @@ using Assistant.Core.LlmClient;
 namespace Assistant.App;
 
 /// <summary>IPC 請求格式（前端 → 後端）</summary>
-internal sealed class IpcRequest
-{
-    [JsonPropertyName("command")]
-    public string Command { get; set; } = string.Empty;
-
-    [JsonPropertyName("requestId")]
-    public string RequestId { get; set; } = string.Empty;
-
-    [JsonPropertyName("payload")]
-    public JsonElement Payload { get; set; }
-}
+internal sealed record IpcRequest(
+    [property: JsonPropertyName("command")] string Command = "",
+    [property: JsonPropertyName("requestId")] string RequestId = "",
+    [property: JsonPropertyName("payload")] JsonElement Payload = default
+);
 
 /// <summary>IPC 回應格式（後端 → 前端）</summary>
-internal sealed class IpcResponse
-{
-    [JsonPropertyName("requestId")]
-    public string RequestId { get; set; } = string.Empty;
-
-    [JsonPropertyName("success")]
-    public bool Success { get; set; }
-
-    [JsonPropertyName("data")]
-    public JsonElement? Data { get; set; }
-
-    [JsonPropertyName("error")]
-    public string? Error { get; set; }
-}
+internal sealed record IpcResponse<T>(
+    [property: JsonPropertyName("requestId")] string RequestId = "",
+    [property: JsonPropertyName("success")] bool Success = false,
+    [property: JsonPropertyName("data")] T? Data = default,
+    [property: JsonPropertyName("error")] string? Error = null
+);
 
 // ── 各命令專用 Payload DTO ──────────────────────────────────────────────────
 
-internal sealed class IngestPayload
-{
-    [JsonPropertyName("content")]
-    public string Content { get; set; } = string.Empty;
+internal sealed record IngestPayload(
+    [property: JsonPropertyName("content")] string Content = "",
+    [property: JsonPropertyName("source")] string Source = ""
+);
 
-    [JsonPropertyName("source")]
-    public string Source { get; set; } = string.Empty;
-}
+internal sealed record EntryGetPayload(
+    [property: JsonPropertyName("entryId")] Guid EntryId
+);
 
-internal sealed class EntryGetPayload
-{
-    [JsonPropertyName("entryId")]
-    public Guid EntryId { get; set; }
-}
+internal sealed record RollbackPayload(
+    [property: JsonPropertyName("entryId")] Guid EntryId,
+    [property: JsonPropertyName("version")] int Version
+);
 
-internal sealed class RollbackPayload
-{
-    [JsonPropertyName("entryId")]
-    public Guid EntryId { get; set; }
+internal sealed record HistoryPayload(
+    [property: JsonPropertyName("entryId")] Guid EntryId
+);
 
-    [JsonPropertyName("version")]
-    public int Version { get; set; }
-}
+internal sealed record SearchPayload(
+    [property: JsonPropertyName("query")] string Query = ""
+);
 
-internal sealed class HistoryPayload
-{
-    [JsonPropertyName("entryId")]
-    public Guid EntryId { get; set; }
-}
+internal sealed record TestConfigPayload(
+    [property: JsonPropertyName("endpoint")] string Endpoint = "",
+    [property: JsonPropertyName("apiKey")] string ApiKey = "",
+    [property: JsonPropertyName("modelName")] string ModelName = ""
+);
 
-internal sealed class SearchPayload
-{
-    [JsonPropertyName("query")]
-    public string Query { get; set; } = string.Empty;
-}
-
-internal sealed class TestConfigPayload
-{
-    [JsonPropertyName("endpoint")]
-    public string Endpoint { get; set; } = string.Empty;
-
-    [JsonPropertyName("apiKey")]
-    public string ApiKey { get; set; } = string.Empty;
-
-    [JsonPropertyName("modelName")]
-    public string ModelName { get; set; } = string.Empty;
-}
-
-internal sealed class TestConfigResult
-{
-    [JsonPropertyName("success")]
-    public bool Success { get; set; }
-
-    [JsonPropertyName("errorMessage")]
-    public string? ErrorMessage { get; set; }
-}
+internal sealed record TestConfigResult(
+    [property: JsonPropertyName("success")] bool Success = false,
+    [property: JsonPropertyName("errorMessage")] string? ErrorMessage = null
+);
 
 // ── AOT-safe Source-generated Serialization Context ──────────────────────
 
 [JsonSerializable(typeof(IpcRequest))]
-[JsonSerializable(typeof(IpcResponse))]
+[JsonSerializable(typeof(IpcResponse<object>))]
+[JsonSerializable(typeof(IpcResponse<KnowledgeEntry>))]
+[JsonSerializable(typeof(IpcResponse<List<SearchResult>>))]
+[JsonSerializable(typeof(IpcResponse<List<KnowledgeVersion>>))]
+[JsonSerializable(typeof(IpcResponse<AppSettings>))]
+[JsonSerializable(typeof(IpcResponse<TestConfigResult>))]
 [JsonSerializable(typeof(IngestPayload))]
 [JsonSerializable(typeof(EntryGetPayload))]
 [JsonSerializable(typeof(RollbackPayload))]
@@ -117,30 +84,20 @@ internal partial class IpcJsonContext : JsonSerializerContext { }
 /// <summary>
 /// IPC 橋接層：解析前端 postMessage（JSON）→ 路由至對應 Core 服務 → 回傳 JSON 結果。
 /// </summary>
-internal sealed class IpcBridge
+internal sealed class IpcBridge(
+    IIngestionService ingestion,
+    IKnowledgeEntryService knowledge,
+    IConfigService config,
+    IVersionControlService versionControl,
+    IVectorSearchEngine searchEngine,
+    ILlmClientFactory llmClientFactory)
 {
-    private readonly IIngestionService _ingestion;
-    private readonly IKnowledgeEntryService _knowledge;
-    private readonly IConfigService _config;
-    private readonly IVersionControlService _versionControl;
-    private readonly IVectorSearchEngine _searchEngine;
-    private readonly ILlmClientFactory _llmClientFactory;
-
-    public IpcBridge(
-        IIngestionService ingestion,
-        IKnowledgeEntryService knowledge,
-        IConfigService config,
-        IVersionControlService versionControl,
-        IVectorSearchEngine searchEngine,
-        ILlmClientFactory llmClientFactory)
-    {
-        _ingestion = ingestion;
-        _knowledge = knowledge;
-        _config = config;
-        _versionControl = versionControl;
-        _searchEngine = searchEngine;
-        _llmClientFactory = llmClientFactory;
-    }
+    private readonly IIngestionService _ingestion = ingestion;
+    private readonly IKnowledgeEntryService _knowledge = knowledge;
+    private readonly IConfigService _config = config;
+    private readonly IVersionControlService _versionControl = versionControl;
+    private readonly IVectorSearchEngine _searchEngine = searchEngine;
+    private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
 
     /// <summary>處理單一 IPC 請求，回傳序列化後的 JSON 回應字串</summary>
     public async Task<string> HandleAsync(string requestJson)
@@ -268,36 +225,42 @@ internal sealed class IpcBridge
     {
         if (data is null)
         {
-            var response = new IpcResponse { RequestId = requestId, Success = true, Data = null };
-            return JsonSerializer.Serialize(response, IpcJsonContext.Default.IpcResponse);
+            var response = new IpcResponse<object> { RequestId = requestId, Success = true, Data = null };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<object>), IpcJsonContext.Default);
         }
 
-        string json;
         if (data is KnowledgeEntry entry)
-            json = JsonSerializer.Serialize(entry, IpcJsonContext.Default.KnowledgeEntry);
-        else if (data is List<SearchResult> searchResults)
-            json = JsonSerializer.Serialize(searchResults, IpcJsonContext.Default.ListSearchResult);
-        else if (data is List<KnowledgeVersion> history)
-            json = JsonSerializer.Serialize(history, IpcJsonContext.Default.ListKnowledgeVersion);
-        else if (data is AppSettings settings)
-            json = JsonSerializer.Serialize(settings, IpcJsonContext.Default.AppSettings);
-        else if (data is TestConfigResult testResult)
-            json = JsonSerializer.Serialize(testResult, IpcJsonContext.Default.TestConfigResult);
-        else
-            throw new NotSupportedException($"Serialization of type {data.GetType().FullName} is not supported in Native AOT.");
-
-        using var doc = JsonDocument.Parse(json);
-        var responseWithData = new IpcResponse
         {
-            RequestId = requestId,
-            Success = true,
-            Data = doc.RootElement.Clone()
-        };
-        return JsonSerializer.Serialize(responseWithData, IpcJsonContext.Default.IpcResponse);
+            var response = new IpcResponse<KnowledgeEntry> { RequestId = requestId, Success = true, Data = entry };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<KnowledgeEntry>), IpcJsonContext.Default);
+        }
+        if (data is List<SearchResult> searchResults)
+        {
+            var response = new IpcResponse<List<SearchResult>> { RequestId = requestId, Success = true, Data = searchResults };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<List<SearchResult>>), IpcJsonContext.Default);
+        }
+        if (data is List<KnowledgeVersion> history)
+        {
+            var response = new IpcResponse<List<KnowledgeVersion>> { RequestId = requestId, Success = true, Data = history };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<List<KnowledgeVersion>>), IpcJsonContext.Default);
+        }
+        if (data is AppSettings settings)
+        {
+            var response = new IpcResponse<AppSettings> { RequestId = requestId, Success = true, Data = settings };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<AppSettings>), IpcJsonContext.Default);
+        }
+        if (data is TestConfigResult testResult)
+        {
+            var response = new IpcResponse<TestConfigResult> { RequestId = requestId, Success = true, Data = testResult };
+            return JsonSerializer.Serialize(response, typeof(IpcResponse<TestConfigResult>), IpcJsonContext.Default);
+        }
+
+        throw new NotSupportedException($"Serialization of type {data.GetType().FullName} is not supported in Native AOT.");
     }
 
     private static string ErrorResponse(string requestId, string error) =>
         JsonSerializer.Serialize(
-            new IpcResponse { RequestId = requestId, Success = false, Error = error },
-            IpcJsonContext.Default.IpcResponse);
+            new IpcResponse<object> { RequestId = requestId, Success = false, Error = error },
+            typeof(IpcResponse<object>),
+            IpcJsonContext.Default);
 }

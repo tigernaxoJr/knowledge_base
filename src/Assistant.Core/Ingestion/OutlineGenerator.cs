@@ -3,16 +3,10 @@ using Assistant.Core.LlmClient;
 
 namespace Assistant.Core.Ingestion;
 
-public sealed class OutlineGenerator : IOutlineGenerator
+public sealed class OutlineGenerator(ILlmClientFactory llmClientFactory, IConfigService configService) : IOutlineGenerator
 {
-    private readonly ILlmClientFactory _llmClientFactory;
-    private readonly IConfigService _configService;
-
-    public OutlineGenerator(ILlmClientFactory llmClientFactory, IConfigService configService)
-    {
-        _llmClientFactory = llmClientFactory;
-        _configService = configService;
-    }
+    private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
+    private readonly IConfigService _configService = configService;
 
     public async Task<string> GenerateOutlineAsync(string documentContent, CancellationToken ct = default)
     {

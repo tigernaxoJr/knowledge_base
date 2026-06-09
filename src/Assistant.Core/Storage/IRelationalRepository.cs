@@ -46,12 +46,18 @@ public interface IRelationalRepository
     Task<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)?> GetEntryAsync(
         Guid entryId, CancellationToken ct = default);
 
+    Task<IReadOnlyList<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)>> GetEntriesAsync(
+        IEnumerable<Guid> entryIds, CancellationToken ct = default);
+
     Task InsertVersionAsync(
         Guid entryId, string contentSnapshot, int version,
         DateTimeOffset archivedAt, CancellationToken ct = default);
 
     Task<IReadOnlyList<(int Version, string ContentSnapshot, DateTimeOffset ArchivedAt)>> GetVersionHistoryAsync(
         Guid entryId, CancellationToken ct = default);
+
+    Task<(int Version, string ContentSnapshot, DateTimeOffset ArchivedAt)?> GetVersionAsync(
+        Guid entryId, int version, CancellationToken ct = default);
 
     Task<Guid> StartOperationAsync(
         OperationKind kind, Guid? subjectId, string source,

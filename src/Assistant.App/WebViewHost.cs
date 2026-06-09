@@ -11,18 +11,12 @@ namespace Assistant.App;
 /// - 導向至 <c>https://frontend.local/index.html</c>（Embedded Resource）
 /// - 委派訊息收發給 <see cref="IpcBridge"/>
 /// </summary>
-internal sealed class WebViewHost : IDisposable
+internal sealed class WebViewHost(IpcBridge ipcBridge, ResourceLoader resourceLoader) : IDisposable
 {
-    private readonly IpcBridge _ipcBridge;
-    private readonly ResourceLoader _resourceLoader;
+    private readonly IpcBridge _ipcBridge = ipcBridge;
+    private readonly ResourceLoader _resourceLoader = resourceLoader;
     private Form? _form;
     private WebView2? _webView;
-
-    public WebViewHost(IpcBridge ipcBridge, ResourceLoader resourceLoader)
-    {
-        _ipcBridge = ipcBridge;
-        _resourceLoader = resourceLoader;
-    }
 
     /// <summary>阻塞式啟動：建立視窗並進入訊息迴圈</summary>
     public void Run()

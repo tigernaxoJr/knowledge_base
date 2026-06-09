@@ -2,32 +2,33 @@ using Assistant.Core.Storage;
 
 namespace Assistant.Core.Search;
 
-public sealed class VectorSearchEngine : IVectorSearchEngine
+public sealed class VectorSearchEngine(ILanceDbClient lanceDbClient, IRelationalRepository relationalRepository) : IVectorSearchEngine
 {
-    private readonly ILanceDbClient _lanceDbClient;
-    private readonly IRelationalRepository _relationalRepository;
-
-    public VectorSearchEngine(ILanceDbClient lanceDbClient, IRelationalRepository relationalRepository)
-    {
-        _lanceDbClient = lanceDbClient;
-        _relationalRepository = relationalRepository;
-    }
+    private readonly ILanceDbClient _lanceDbClient = lanceDbClient;
+    private readonly IRelationalRepository _relationalRepository = relationalRepository;
 
     public async Task<IReadOnlyList<SearchResult>> SearchKnowledgeEntriesAsync(
         float[] queryVector, int topK = 5, CancellationToken ct = default)
     {
         var vectorMatches = await _lanceDbClient.SearchEntryVectorsAsync(queryVector, topK, ct);
-        var results = new List<SearchResult>();
+        if (vectorMatches.Count == 0)
+        {
+            return Array.Empty<SearchResult>();
+        }
 
+        var entryIds = vectorMatches.Select(m => m.EntryId).ToList();
+        var entries = await _relationalRepository.GetEntriesAsync(entryIds, ct);
+        var entryMap = entries.ToDictionary(e => e.EntryId);
+
+        var results = new List<SearchResult>();
         foreach (var match in vectorMatches)
         {
-            var entry = await _relationalRepository.GetEntryAsync(match.EntryId, ct);
-            if (entry != null)
+            if (entryMap.TryGetValue(match.EntryId, out var entry))
             {
                 results.Add(new SearchResult
                 {
                     EntryId = match.EntryId,
-                    Title = entry.Value.Title,
+                    Title = entry.Title,
                     Score = match.Score
                 });
             }

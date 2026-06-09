@@ -98,84 +98,47 @@ public sealed class LanceDbClient : ILanceDbClient, IDisposable
 
     // ── 大綱向量表 (document_outlines_vector) ──────────────────────────────
 
-    public async Task UpsertOutlineVectorAsync(
+    public Task UpsertOutlineVectorAsync(
         Guid outlineId, string title, float[] vector, CancellationToken ct = default)
     {
-        var connection = await GetConnectionAsync(ct);
-        var table = await GetOrCreateTableAsync(connection, "document_outlines_vector", vector.Length, ct);
-
-        // Delete if exists to avoid duplicates
-        await table.Delete($"outline_id = '{outlineId}'");
-
-        var schema = CreateSchema("document_outlines_vector", vector.Length);
-        
-        var idArray = new StringArray.Builder().Append(outlineId.ToString()).Build();
-        var titleArray = new StringArray.Builder().Append(title).Build();
-
-        var listBuilder = new FixedSizeListArray.Builder(FloatType.Default, vector.Length);
-        listBuilder.Append();
-        var floatBuilder = (FloatArray.Builder)listBuilder.ValueBuilder;
-        foreach (var val in vector)
-        {
-            floatBuilder.Append(val);
-        }
-        var vectorArray = listBuilder.Build();
-
-        using var batch = new RecordBatch(schema, new IArrowArray[] { idArray, titleArray, vectorArray }, 1);
-        await table.Add(batch);
+        return UpsertVectorInternalAsync("document_outlines_vector", outlineId, title, vector, ct);
     }
 
     public async Task<IReadOnlyList<(Guid OutlineId, float Score)>> SearchOutlineVectorsAsync(
         float[] queryVector, int topK, CancellationToken ct = default)
     {
-        var connection = await GetConnectionAsync(ct);
-        var table = await GetOrCreateTableAsync(connection, "document_outlines_vector", queryVector.Length, ct);
-
-        using var reader = await table.Query()
-            .NearestTo(queryVector)
-            .Limit(topK)
-            .ToBatches();
-
-        var results = new List<(Guid OutlineId, float Score)>();
-
-        await foreach (var batch in reader)
-        {
-            var idColumn = batch.Column("outline_id") as StringArray;
-            var distanceColumn = batch.Column("_distance") as FloatArray;
-
-            if (idColumn != null && distanceColumn != null)
-            {
-                for (int i = 0; i < batch.Length; i++)
-                {
-                    var idStr = idColumn.GetString(i);
-                    if (Guid.TryParse(idStr, out var id))
-                    {
-                        var distance = distanceColumn.GetValue(i) ?? 0.0f;
-                        // Translate cosine distance (1 - similarity) to similarity score
-                        var score = 1.0f - distance;
-                        results.Add((id, score));
-                    }
-                }
-            }
-        }
-
-        return results.OrderByDescending(r => r.Score).Take(topK).ToList();
+        var results = await SearchVectorsInternalAsync("document_outlines_vector", "outline_id", queryVector, topK, ct);
+        return results.Select(r => (r.Id, r.Score)).ToList();
     }
 
     // ── 知識條目向量表 (knowledge_entries_vector) ──────────────────────────
 
-    public async Task UpsertEntryVectorAsync(
+    public Task UpsertEntryVectorAsync(
         Guid entryId, string title, float[] vector, CancellationToken ct = default)
     {
+        return UpsertVectorInternalAsync("knowledge_entries_vector", entryId, title, vector, ct);
+    }
+
+    public async Task<IReadOnlyList<(Guid EntryId, float Score)>> SearchEntryVectorsAsync(
+        float[] queryVector, int topK, CancellationToken ct = default)
+    {
+        var results = await SearchVectorsInternalAsync("knowledge_entries_vector", "entry_id", queryVector, topK, ct);
+        return results.Select(r => (r.Id, r.Score)).ToList();
+    }
+
+    private async Task UpsertVectorInternalAsync(
+        string tableName, Guid id, string title, float[] vector, CancellationToken ct)
+    {
         var connection = await GetConnectionAsync(ct);
-        var table = await GetOrCreateTableAsync(connection, "knowledge_entries_vector", vector.Length, ct);
+        var table = await GetOrCreateTableAsync(connection, tableName, vector.Length, ct);
 
         // Delete if exists to avoid duplicates
-        await table.Delete($"entry_id = '{entryId}'");
+        var idField = tableName == "document_outlines_vector" ? "outline_id" : "entry_id";
+        await table.Delete($"{idField} = '{id}'");
 
-        var schema = CreateSchema("knowledge_entries_vector", vector.Length);
+        var schema = CreateSchema(tableName, vector.Length);
         
-        var idArray = new StringArray.Builder().Append(entryId.ToString()).Build();
+        var idArray = new StringArray.Builder().Append(id.ToString()).Build();
         var titleArray = new StringArray.Builder().Append(title).Build();
 
         var listBuilder = new FixedSizeListArray.Builder(FloatType.Default, vector.Length);
@@ -191,22 +154,22 @@ public sealed class LanceDbClient : ILanceDbClient, IDisposable
         await table.Add(batch);
     }
 
-    public async Task<IReadOnlyList<(Guid EntryId, float Score)>> SearchEntryVectorsAsync(
-        float[] queryVector, int topK, CancellationToken ct = default)
+    private async Task<IReadOnlyList<(Guid Id, float Score)>> SearchVectorsInternalAsync(
+        string tableName, string idFieldName, float[] queryVector, int topK, CancellationToken ct)
     {
         var connection = await GetConnectionAsync(ct);
-        var table = await GetOrCreateTableAsync(connection, "knowledge_entries_vector", queryVector.Length, ct);
+        var table = await GetOrCreateTableAsync(connection, tableName, queryVector.Length, ct);
 
         using var reader = await table.Query()
             .NearestTo(queryVector)
             .Limit(topK)
             .ToBatches();
 
-        var results = new List<(Guid EntryId, float Score)>();
+        var results = new List<(Guid Id, float Score)>();
 
         await foreach (var batch in reader)
         {
-            var idColumn = batch.Column("entry_id") as StringArray;
+            var idColumn = batch.Column(idFieldName) as StringArray;
             var distanceColumn = batch.Column("_distance") as FloatArray;
 
             if (idColumn != null && distanceColumn != null)

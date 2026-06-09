@@ -5,16 +5,10 @@ using Assistant.Core.Config;
 
 namespace Assistant.Core.LlmClient;
 
-public sealed class EmbeddingClient : IEmbeddingClient
+public sealed class EmbeddingClient(HttpClient httpClient, Func<CancellationToken, Task<EmbeddingConfig>> configProvider) : IEmbeddingClient
 {
-    private readonly HttpClient _httpClient;
-    private readonly EmbeddingConfig _config;
-
-    public EmbeddingClient(HttpClient httpClient, EmbeddingConfig config)
-    {
-        _httpClient = httpClient;
-        _config = config;
-    }
+    private readonly HttpClient _httpClient = httpClient;
+    private readonly Func<CancellationToken, Task<EmbeddingConfig>> _configProvider = configProvider;
 
     public async Task<float[]> EmbedAsync(string text, CancellationToken ct = default)
     {
@@ -30,7 +24,8 @@ public sealed class EmbeddingClient : IEmbeddingClient
             return Array.Empty<float[]>();
         }
 
-        var endpoint = _config.Endpoint;
+        var config = await _configProvider(ct);
+        var endpoint = config.Endpoint;
         if (string.IsNullOrWhiteSpace(endpoint) || !Uri.TryCreate(endpoint, UriKind.Absolute, out _))
         {
             throw new InvalidOperationException("向量模型 API 端點 (Endpoint) 未配置或不是有效的絕對 URL。請先至首頁右上角的「設定」頁面配置向量模型端點與 API 金鑰！");
@@ -38,9 +33,9 @@ public sealed class EmbeddingClient : IEmbeddingClient
         var requestUrl = endpoint.TrimEnd('/') + "/embeddings";
         using var request = new HttpRequestMessage(HttpMethod.Post, requestUrl);
 
-        if (!string.IsNullOrEmpty(_config.ApiKey))
+        if (!string.IsNullOrEmpty(config.ApiKey))
         {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.ApiKey);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", config.ApiKey);
         }
 
         // 避免本地或部分輕量向量模型伺服器的 512-token 實體批次大小限制（如 Ollama/llama.cpp 的預設限制）。
@@ -52,7 +47,7 @@ public sealed class EmbeddingClient : IEmbeddingClient
 
         var requestBody = new EmbeddingRequest
         {
-            Model = _config.ModelName,
+            Model = config.ModelName,
             Input = truncatedTexts
         };
 

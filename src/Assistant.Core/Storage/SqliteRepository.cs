@@ -185,6 +185,52 @@ public sealed class SqliteRepository : IRelationalRepository
         return null;
     }
 
+    public async Task<IReadOnlyList<(Guid EntryId, string Title, string Content, int Version, DateTimeOffset UpdatedAt)>> GetEntriesAsync(
+        IEnumerable<Guid> entryIds, CancellationToken ct = default)
+    {
+        var ids = entryIds.Select(id => id.ToString()).ToList();
+        if (ids.Count == 0)
+        {
+            return Array.Empty<(Guid, string, string, int, DateTimeOffset)>();
+        }
+
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var paramNames = new string[ids.Count];
+        for (int i = 0; i < ids.Count; i++)
+        {
+            paramNames[i] = $"$id{i}";
+        }
+
+        var query = $@"
+            SELECT entry_id, title, content, version, updated_at
+            FROM knowledge_entries
+            WHERE entry_id IN ({string.Join(", ", paramNames)});
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        for (int i = 0; i < ids.Count; i++)
+        {
+            command.Parameters.AddWithValue(paramNames[i], ids[i]);
+        }
+
+        var list = new List<(Guid, string, string, int, DateTimeOffset)>();
+        using var reader = await command.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+        {
+            var id = Guid.Parse(reader.GetString(0));
+            var title = reader.GetString(1);
+            var content = reader.GetString(2);
+            var version = reader.GetInt32(3);
+            var updatedAt = DateTimeOffset.Parse(reader.GetString(4), CultureInfo.InvariantCulture);
+
+            list.Add((id, title, content, version, updatedAt));
+        }
+
+        return list;
+    }
+
     public async Task InsertVersionAsync(
         Guid entryId, string contentSnapshot, int version,
         DateTimeOffset archivedAt, CancellationToken ct = default)
@@ -236,6 +282,34 @@ public sealed class SqliteRepository : IRelationalRepository
         }
 
         return list;
+    }
+
+    public async Task<(int Version, string ContentSnapshot, DateTimeOffset ArchivedAt)?> GetVersionAsync(
+        Guid entryId, int version, CancellationToken ct = default)
+    {
+        using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var query = @"
+            SELECT version, content_snapshot, archived_at
+            FROM knowledge_versions
+            WHERE entry_id = $entryId AND version = $version;
+        ";
+
+        using var command = new SqliteCommand(query, connection);
+        command.Parameters.AddWithValue("$entryId", entryId.ToString());
+        command.Parameters.AddWithValue("$version", version);
+
+        using var reader = await command.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+        {
+            var ver = reader.GetInt32(0);
+            var snapshot = reader.GetString(1);
+            var archivedAt = DateTimeOffset.Parse(reader.GetString(2), CultureInfo.InvariantCulture);
+            return (ver, snapshot, archivedAt);
+        }
+
+        return null;
     }
 
     public async Task<Guid> StartOperationAsync(

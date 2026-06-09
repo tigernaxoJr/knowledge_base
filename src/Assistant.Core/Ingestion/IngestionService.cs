@@ -8,39 +8,26 @@ using System.Text;
 
 namespace Assistant.Core.Ingestion;
 
-public sealed class IngestionService : IIngestionService
+public sealed class IngestionService(
+    IRelationalRepository relationalRepository,
+    IOutlineGenerator outlineGenerator,
+    ILlmClientFactory llmClientFactory,
+    ILanceDbClient lanceDbClient,
+    IVectorSearchEngine vectorSearchEngine,
+    IRoutingDecision routingDecision,
+    IKnowledgeEntryService knowledgeEntryService,
+    IHdbscanEngine hdbscanEngine,
+    IPromptProvider prompts) : IIngestionService
 {
-    private readonly IRelationalRepository _relationalRepository;
-    private readonly IOutlineGenerator _outlineGenerator;
-    private readonly ILlmClientFactory _llmClientFactory;
-    private readonly ILanceDbClient _lanceDbClient;
-    private readonly IVectorSearchEngine _vectorSearchEngine;
-    private readonly IRoutingDecision _routingDecision;
-    private readonly IKnowledgeEntryService _knowledgeEntryService;
-    private readonly IHdbscanEngine _hdbscanEngine;
-    private readonly IPromptProvider _prompts;
-
-    public IngestionService(
-        IRelationalRepository relationalRepository,
-        IOutlineGenerator outlineGenerator,
-        ILlmClientFactory llmClientFactory,
-        ILanceDbClient lanceDbClient,
-        IVectorSearchEngine vectorSearchEngine,
-        IRoutingDecision routingDecision,
-        IKnowledgeEntryService knowledgeEntryService,
-        IHdbscanEngine hdbscanEngine,
-        IPromptProvider prompts)
-    {
-        _relationalRepository = relationalRepository;
-        _outlineGenerator = outlineGenerator;
-        _llmClientFactory = llmClientFactory;
-        _lanceDbClient = lanceDbClient;
-        _vectorSearchEngine = vectorSearchEngine;
-        _routingDecision = routingDecision;
-        _knowledgeEntryService = knowledgeEntryService;
-        _hdbscanEngine = hdbscanEngine;
-        _prompts = prompts;
-    }
+    private readonly IRelationalRepository _relationalRepository = relationalRepository;
+    private readonly IOutlineGenerator _outlineGenerator = outlineGenerator;
+    private readonly ILlmClientFactory _llmClientFactory = llmClientFactory;
+    private readonly ILanceDbClient _lanceDbClient = lanceDbClient;
+    private readonly IVectorSearchEngine _vectorSearchEngine = vectorSearchEngine;
+    private readonly IRoutingDecision _routingDecision = routingDecision;
+    private readonly IKnowledgeEntryService _knowledgeEntryService = knowledgeEntryService;
+    private readonly IHdbscanEngine _hdbscanEngine = hdbscanEngine;
+    private readonly IPromptProvider _prompts = prompts;
 
     public async Task IngestAsync(RawDocument document, CancellationToken ct = default)
     {
